@@ -290,7 +290,7 @@ const P = {
   x:140, y:1334, w:26, h:46, vx:0, vy:0,
   grounded:false, wallL:false, wallR:false, onOneWay:false,
   coyote:0, jumpBuf:0, airJumps:1, dropT:0,
-  dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true,
+  dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true, dashGround:false, landLagT:0,
   hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0, hurtT:0,
   contactCd:0, hazardCd:0, mirrorCd:0,
   gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0, ammo:12, reloadT:0,
@@ -470,7 +470,7 @@ function initWorld(mode, stage){
   const sp = spawns[MP.on? MP.you : 0] || spawns[0];
   P.spawn=sp; P.x=sp.x; P.y=sp.y-(C.h-46); P.vx=P.vy=0; P.hp=C.hp; P.deadT=0; P.invulnT=1;
   P.gun=C.gun; P.chargeT=-1; P.hook=null; P.airJumps=1; P.canAirDash=true; P.dashT=0; P.dashCd=0; P.blinkCd=0; P.spikedT=0;
-  P.ammo=GUNS[C.gun].mag; P.reloadT=0; P.contactCd=0; P.hazardCd=0; P.mirrorCd=0;
+  P.ammo=GUNS[C.gun].mag; P.reloadT=0; P.contactCd=0; P.hazardCd=0; P.mirrorCd=0; P.landLagT=0; P.dashGround=false;
   for(const p of peers){ Object.assign(p, newPeer()); }
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
@@ -1431,9 +1431,11 @@ function tryDash(){
   if(!P.grounded && !P.canAirDash) return;
   let dx=(keys.KeyD?1:0)-(keys.KeyA?1:0);
   let dy=(keys.KeyS?1:0)-(keys.KeyW?1:0);
+  if(P.grounded) dy=0; // ground dashes stay on the ground (jump first to dash upward)
   if(!dx && !dy) dx=P.facing;
   const l=Math.hypot(dx,dy)||1;
   P.dashVX=dx/l*920; P.dashVY=dy/l*920;
+  P.dashGround=P.grounded;
   P.dashT=0.15; P.dashCd = (buffs.skate>0? 0.6:1)*CLASSES[P.cls].dashCd;
   if(!P.grounded) P.canAirDash=false;
   P.hook=null;
@@ -1475,7 +1477,9 @@ function updatePlayer(dt){
 
   if(P.dashT>0){
     P.dashT-=dt;
-    P.vx=P.dashVX; P.vy=P.dashVY;
+    P.vx=P.dashVX;
+    if(P.dashGround) P.vy=Math.min(P.vy+GRAV*dt,900); // gravity keeps ground dashes glued (and drops you off ledges)
+    else P.vy=P.dashVY;
     if(P.dashT<=0) P.airJumps=Math.max(P.airJumps,1);
     if(Math.random()<0.7) particles.push({x:P.x+P.w/2,y:P.y+P.h/2,vx:0,vy:0,life:0.25,max:0.25,color:buffs.star>0?`hsl(${beatT*400%360},100%,65%)`:'#00ffd9',size:9,grav:0,ghost:true});
   } else {
@@ -1512,10 +1516,11 @@ function updatePlayer(dt){
     } else if((P.wallL||P.wallR)&&P.vy>0&&move!==0) P.vy=Math.min(P.vy+g*dt,240);
     else P.vy=Math.min(P.vy+g*dt,1150);
   }
-  P.dashCd-=dt; P.coyote-=dt; P.jumpBuf-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
-  P.contactCd-=dt; P.hazardCd-=dt; P.mirrorCd-=dt;
+  P.dashCd-=dt; P.coyote-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
+  P.contactCd-=dt; P.hazardCd-=dt; P.mirrorCd-=dt; P.landLagT-=dt;
+  if(!(P.dashT>0 && !P.grounded)) P.jumpBuf-=dt; // air dash: hold the buffered jump until the dash ends
 
-  if(P.jumpBuf>0){
+  if(P.jumpBuf>0 && !(P.dashT>0 && !P.grounded) && !(P.grounded && P.landLagT>0)){
     if(P.grounded||P.coyote>0){ P.vy=-680; P.grounded=false; P.coyote=0; P.jumpBuf=0; P.hook=null; P.dashT=0; } // jump cancels dash, momentum rides along
     else if(P.hook){ P.hook=null; P.vy=-580; P.jumpBuf=0; P.airJumps=Math.max(P.airJumps,1); }
     else if(P.wallL){ P.vy=-640; P.vx=440; P.jumpBuf=0; sparks(P.x,P.y+P.h/2,'#00ffd9',5,120); }
@@ -1561,6 +1566,7 @@ function updatePlayer(dt){
     popup(P.x+P.w/2,P.y-14,'BOING','#ffe14d',12);
     sfxNoise(0.14,0.35,600);
   }
+  if(P.grounded && !wasGrounded && P.dashT<=0) P.landLagT=0.1; // landing lag — dashing through the landing skips it
   if(P.grounded){ P.coyote=0.1; P.airJumps=1; P.canAirDash=true; }
   else if(wasGrounded) P.coyote=0.1;
   if(P.wallL||P.wallR) P.canAirDash=true;
