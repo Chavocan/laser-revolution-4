@@ -59,9 +59,11 @@ Everyone playing on itch shares the same lobbies, room codes, and 4-player match
 
 ## Lobby flow
 
-Host clicks HOST CO-OP / HOST FACE-OFF (stage selector cycles the VS arena, or RANDOM) →
-up to 3 more players click the JOIN button that appears on their menus → host presses
-START. Keep game windows visible — hidden browser tabs throttle their sim.
+Host clicks HOST CO-OP / HOST FACE-OFF (stage selector cycles the VS arena, or RANDOM).
+Everyone else opens **JOIN A PARTY** — the party browser lists every open session live
+(code · mode · stage · player count, one click to join) and has a 4-letter code entry
+for private invites. Host presses START when 2-4 dancers are in. Keep game windows
+visible — hidden browser tabs throttle their sim.
 
 ## Stages (Face-Off)
 
