@@ -476,6 +476,13 @@ function upgLine(){
   return parts.join(' · ');
 }
 let matchEndT = 0, matchWinner = -1, killFreezeT = 0, streakN = 0, streakT = 0;
+// scoreboard + kill feed
+let feedMsgs = [], sbFlash = [0,0,0,0], sbPrev = [0,0,0,0];
+function feedAdd(text, color){
+  feedMsgs.unshift({text, color:color||'#fff', life:5, max:5});
+  if(feedMsgs.length>5) feedMsgs.pop();
+}
+function slotCol(i){ return i===MP.you? myCol() : peerColor(i); }
 let orbitA = 0, orbitFT = 0;
 let mirrorMax = MIRROR_BASE;
 let heldItem = null;
@@ -597,7 +604,8 @@ function checkWin(){
   if(matchEndT>0) return;
   for(let i=0;i<4;i++) if(MP.frags[i]>=KILL_TARGET){
     matchWinner=i; matchEndT=6;
-    announce(i===MP.you? '★ YOU TAKE THE CROWN ★':'☠ P'+(i+1)+' TAKES THE CROWN ☠');
+    feedAdd('♛ '+nameOf(i)+' takes the crown', '#ffe14d');
+    announce(i===MP.you? '★ YOU TAKE THE CROWN ★':'☠ '+nameOf(i)+' TAKES THE CROWN ☠');
     playOverlay('crown',7);
     sting(i===MP.you?'yeah':'airhorn');
     // everyone leaves the round with a weapon upgrade for the rematch
@@ -610,8 +618,13 @@ function checkWin(){
 }
 function applyDeath(who,by){
   if(matchEndT>0) return; // scores frozen during the podium party
-  if(by==null || by<0 || by===who) MP.frags[who]--;
-  else MP.frags[by]++;
+  if(by==null || by<0 || by===who){
+    MP.frags[who]--;
+    feedAdd('💥 '+nameOf(who)+' self-destructed', 'rgba(255,255,255,0.65)');
+  } else {
+    MP.frags[by]++;
+    feedAdd(nameOf(by)+' ⚡ '+nameOf(who), slotCol(by));
+  }
   if(by===MP.you && who!==MP.you){
     announce('FRAG!  '+fragLine());
     const vp = who===MP.you? {x:P.x+P.w/2,y:P.y} : {x:peers[who].x+13,y:peers[who].y};
@@ -743,6 +756,7 @@ function initWorld(mode, stage){
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
   matchEndT=0; matchWinner=-1; killFreezeT=0; streakN=0; streakT=0; orbitA=0; orbitFT=0;
+  feedMsgs=[]; sbFlash=[0,0,0,0]; sbPrev=[0,0,0,0];
   cam.x=clamp(P.x-VW/2,0,Math.max(0,W-VW)); cam.y=clamp(P.y-VH/2,0,Math.max(0,H-VH));
   psT=0; esnapT=0;
 }
@@ -1434,6 +1448,7 @@ function damageEnemy(en,dmg,bounces,hx,hy){
     score+=pts;
     popup(en.x, (en.type==='prism'?en.y:en.y-en.h)-24, '+'+pts, '#7dff5e', 18);
     explosion(en.x, en.type==='prism'?en.y:en.y-en.h/2, en.type==='prism'?'#7de8ff':'#ff3df0');
+    feedAdd('+'+pts+' · '+(en.type==='prism'? (en.boss?'MIRRORBALL DOWN!!':'prism shattered'):'bot dropped')+(bounces>0? ' ('+bounces+' bounce)':''), '#7dff5e');
     cheerKill(en.x, en.type==='prism'?en.y:en.y-en.h/2);
     shake+=5; sfxKill();
     if(bounces>=2){
@@ -2240,6 +2255,12 @@ function update(dt){
   }
   matchT+=dt;
   helpT-=dt; announceT-=dt; escT-=dt; hurtVigT-=dt; shake=Math.max(0,shake-dt*22);
+  for(const f of feedMsgs) f.life-=dt;
+  while(feedMsgs.length && feedMsgs[feedMsgs.length-1].life<=0) feedMsgs.pop();
+  for(let i=0;i<4;i++){
+    sbFlash[i]-=dt;
+    if(MP.frags[i]!==sbPrev[i]){ sbFlash[i]=0.8; sbPrev[i]=MP.frags[i]; }
+  }
 
   updatePlayer(dt);
   if(MP.isHost || !MP.on) updateEnemiesHost(dt);
@@ -2868,18 +2889,69 @@ function drawHUD(){
       ctx.fillStyle='#ff4dd2'; ctx.beginPath(); ctx.roundRect(VW/2-217,65,434*clamp(b.hp/b.maxHp,0,1),8,4); ctx.fill();
     }
   } else if(MP.on && MP.mode==='vs'){
-    ctx.font='bold 24px Segoe UI';
-    ctx.fillStyle='#000'; ctx.fillText(fragLine(), VW/2+2, 42);
-    ctx.fillStyle='#ffe14d'; ctx.fillText(fragLine(), VW/2, 40);
-    ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.75)';
-    ctx.fillText('FIRST TO 10 · BEST BOUNCE ×'+bestBounce, VW/2, 60);
+    // ranked scoreboard: one colored chip per dancer, progress bars to the target
+    ctx.font='bold 10px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
+    ctx.fillText('FIRST TO '+KILL_TARGET+'  ·  BEST BOUNCE ×'+bestBounce, VW/2, 13);
+    const slots=activeSlots().sort((a,b)=>MP.frags[b]-MP.frags[a]);
+    const lead=slots[0];
+    const cw3=Math.min(150, Math.max(104,(VW-80)/slots.length-10)), gap3=10;
+    const total3=slots.length*cw3+(slots.length-1)*gap3;
+    let sx3=VW/2-total3/2;
+    for(const i of slots){
+      const col= i===MP.you? myCol() : peerColor(i);
+      const flash=sbFlash[i]>0;
+      const y3=20, h3=46;
+      ctx.fillStyle= flash? 'rgba(80,60,10,0.95)' : (i===MP.you? 'rgba(22,18,54,0.92)':'rgba(0,0,0,0.62)');
+      ctx.beginPath(); ctx.roundRect(sx3,y3,cw3,h3,8); ctx.fill();
+      ctx.strokeStyle=col; ctx.lineWidth= flash?3 : (i===MP.you?2.5:1.5);
+      if(i===MP.you){ ctx.shadowColor=col; ctx.shadowBlur=8; }
+      ctx.stroke(); ctx.shadowBlur=0;
+      if(i===lead && MP.frags[lead]>0){
+        ctx.fillStyle='#ffe14d'; ctx.font='bold 14px Segoe UI';
+        ctx.fillText('♛', sx3+cw3/2, y3-3);
+      }
+      ctx.textAlign='left'; ctx.font='bold 11px Segoe UI'; ctx.fillStyle=col;
+      let nm=(i===MP.you? (myName||'YOU') : nameOf(i));
+      if(nm.length>9) nm=nm.slice(0,8)+'…';
+      ctx.fillText(nm, sx3+10, y3+17);
+      ctx.font='9px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.4)';
+      ctx.fillText(CLASSES[i===MP.you? P.cls : (peers[i].cls||0)].name, sx3+10, y3+29);
+      ctx.textAlign='right';
+      ctx.font='bold 22px Segoe UI';
+      ctx.fillStyle= MP.frags[i]<0? '#ff4d6d':'#fff';
+      ctx.fillText(MP.frags[i], sx3+cw3-10, y3+27);
+      // progress to the crown
+      ctx.fillStyle='rgba(255,255,255,0.12)';
+      ctx.fillRect(sx3+8, y3+h3-9, cw3-16, 4);
+      ctx.fillStyle=col;
+      ctx.fillRect(sx3+8, y3+h3-9, (cw3-16)*clamp(MP.frags[i]/KILL_TARGET,0,1), 4);
+      sx3+=cw3+gap3;
+      ctx.textAlign='center';
+    }
   } else {
+    ctx.font='bold 10px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
+    ctx.fillText(MP.on? 'TEAM SCORE':'SCORE', VW/2, 14);
     ctx.font='bold 30px Segoe UI';
-    ctx.fillStyle='#000'; ctx.fillText(score, VW/2+2, 42);
-    ctx.fillStyle='#ffe14d'; ctx.fillText(score, VW/2, 40);
-    ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.75)';
-    ctx.fillText('KILLS '+kills+'   ·   BEST BOUNCE ×'+bestBounce, VW/2, 60);
+    ctx.fillStyle='#000'; ctx.fillText(score, VW/2+2, 44);
+    ctx.fillStyle='#ffe14d'; ctx.fillText(score, VW/2, 42);
+    // labeled stat pills instead of a mystery text line
+    const pills=[['KILLS', kills, '#ff3df0'],['BEST BOUNCE', '×'+bestBounce, '#00ffd9']];
+    let pw=0; ctx.font='bold 10px Segoe UI';
+    const widths=pills.map(pl=>ctx.measureText(pl[0]+'  '+pl[1]).width+22);
+    pw=widths.reduce((a,b)=>a+b,0)+10;
+    let px2=VW/2-pw/2;
+    pills.forEach((pl,pi)=>{
+      ctx.fillStyle='rgba(0,0,0,0.55)';
+      ctx.beginPath(); ctx.roundRect(px2,52,widths[pi],18,6); ctx.fill();
+      ctx.strokeStyle=pl[2]; ctx.lineWidth=1.3; ctx.stroke();
+      ctx.textAlign='left'; ctx.font='bold 10px Segoe UI';
+      ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.fillText(pl[0], px2+8, 65);
+      ctx.fillStyle=pl[2]; ctx.fillText(''+pl[1], px2+8+ctx.measureText(pl[0]).width+6, 65);
+      px2+=widths[pi]+10;
+      ctx.textAlign='center';
+    });
   }
+  drawFeed();
   {
     // your class + signature weapon (upgrades included)
     const C=CLASSES[P.cls], g=effGun(GUNS[P.gun]), x=18, y=VH-96;
@@ -3016,6 +3088,22 @@ function drawHUD(){
   }
   drawHack();
   drawCrosshair();
+}
+function drawFeed(){
+  if(!feedMsgs.length) return;
+  ctx.textAlign='right'; ctx.font='bold 12px Segoe UI';
+  let y=(helpT>0||helpPin)? VH-160 : 96; // dodge the help overlay when it's open
+  for(const f of feedMsgs){
+    const a=clamp(f.life/1.2,0,1)*0.95;
+    ctx.globalAlpha=a;
+    const w2=ctx.measureText(f.text).width+18;
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.roundRect(VW-20-w2,y-13,w2,19,5); ctx.fill();
+    ctx.fillStyle=f.color;
+    ctx.fillText(f.text, VW-28, y);
+    y+=24;
+  }
+  ctx.globalAlpha=1;
 }
 function drawHack(){
   if(hackT<=0) return;
@@ -3734,6 +3822,8 @@ window.LR4 = {
   setVol(k,v){ if(k in vol){ vol[k]=clamp(v,0,1); applyVolumes(); saveVol(); } },
   hitFrom(dx,dy,d){ hitKnock(dx,dy,d||20); },
   winTest(){ MP.frags[MP.you]=KILL_TARGET; checkWin(); },
+  setFrags(a){ for(let i=0;i<4;i++) MP.frags[i]=(a&&a[i])||0; },
+  feed(t,c){ feedAdd(t,c); },
   upg:()=>({...upg}),
   mission(i){ startMission(i); },
   missionState:()=>mission? {id:mission.def.id, t:+mission.t.toFixed(1), over:missionOver, enemies:enemies.filter(e=>!e.dead).length, orbs:orbs.length} : null,
