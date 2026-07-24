@@ -98,6 +98,13 @@ wss.on('connection',ws=>{
       pushRooms();
       return;
     }
+    if(m.t==='rematch'){ // host sends this after the podium — back to the same lobby
+      const r = ws.room && rooms.get(ws.room);
+      if(!r || ws.idx!==0 || !r.started) return;
+      r.started=false;
+      sendLobby(r, ws.room); pushRooms();
+      return;
+    }
     if(m.t==='leave'){ leaveRoom(ws); return; }
     if(m.t==='list'){ ws.send(JSON.stringify({t:'rooms',rooms:roomList()})); return; }
     const r = ws.room && rooms.get(ws.room);

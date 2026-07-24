@@ -256,6 +256,14 @@ const POWERUPS = [
   {id:'rubber',name:'RUBBER RAVE — WALLS BOUNCE LASERS (8s)',short:'RUBBER RAVE',color:'#ffb3e6',w:2, dur:8},
   {id:'ghost', name:'SMOKE MACHINE — NEARLY INVISIBLE (8s)',short:'SMOKE',   color:'#cfd8ea', w:2, dur:8},
   {id:'swap',  name:'DJ SWITCHEROO!',                     short:'SWITCHEROO',color:'#ffe14d', w:2},
+  {id:'magnet',name:'LOOT VACUUM — BOXES COME TO YOU (10s)',short:'VACUUM',  color:'#7de8ff', w:2, dur:10},
+  {id:'bigshot',name:'BIG SHOT ENERGY — CHUNKY LASERS (8s)',short:'BIG SHOT',color:'#ff9d2e', w:2, dur:8},
+  {id:'triple',name:'TRIPLE THREAT — 3-WAY SHOTS (8s)',    short:'TRIPLE',   color:'#b44bff', w:2, dur:8},
+  {id:'vamp',  name:'VAMPIRE FANGS — HITS HEAL YOU (10s)', short:'VAMP',     color:'#ff4d6d', w:2, dur:10},
+  {id:'pogo',  name:'POGO PANTS — AUTO-BOUNCE (10s)',      short:'POGO',     color:'#7dff5e', w:2, dur:10},
+  {id:'mega',  name:'YEET MODE — 2.5x KNOCKBACK (8s)',     short:'YEET',     color:'#ffe14d', w:2, dur:8},
+  {id:'wind',  name:'SECOND WIND — CHEAT DEATH ONCE (45s)',short:'2ND WIND', color:'#f0f4ff', w:2, dur:45},
+  {id:'orbit', name:'DISCO BUDDY — ORBITING TURRET (12s)', short:'BUDDY',    color:'#ff9df5', w:2, dur:12},
 ];
 function rollPowerup(){
   let tot=0; for(const p of POWERUPS) tot+=p.w;
@@ -263,7 +271,29 @@ function rollPowerup(){
   for(let i=0;i<POWERUPS.length;i++){ r-=POWERUPS[i].w; if(r<=0) return i; }
   return 0;
 }
-const buffs = {fever:0, amp:0, over:0, star:0, hook:0, jet:0, moon:0, blink:0, suit:0, skate:0, tiny:0, rubber:0, ghost:0};
+const buffs = {fever:0, amp:0, over:0, star:0, hook:0, jet:0, moon:0, blink:0, suit:0, skate:0, tiny:0, rubber:0, ghost:0,
+  magnet:0, bigshot:0, triple:0, vamp:0, pogo:0, mega:0, wind:0, orbit:0};
+
+// ---------- round-end weapon upgrades (persist across rematches in the same room) ----------
+const KILL_TARGET = 10;
+const UPGRADES = [
+  {k:'dmg',   label:'+15% DAMAGE'},
+  {k:'rof',   label:'+20% FIRE RATE'},
+  {k:'bounce',label:'+1 MAX BOUNCE'},
+  {k:'mag',   label:'+25% MAG SIZE'},
+  {k:'range', label:'+20% RANGE'},
+  {k:'reload',label:'-25% RELOAD TIME'},
+];
+const upg = {dmg:0, rof:0, bounce:0, mag:0, range:0, reload:0};
+let lastReward = '';
+function resetUpgrades(){ for(const k in upg) upg[k]=0; lastReward=''; }
+function upgLine(){
+  const parts=[];
+  for(const u of UPGRADES) if(upg[u.k]>0) parts.push(u.k.toUpperCase()+'×'+upg[u.k]);
+  return parts.join(' · ');
+}
+let matchEndT = 0, matchWinner = -1, killFreezeT = 0, streakN = 0, streakT = 0;
+let orbitA = 0, orbitFT = 0;
 let mirrorMax = MIRROR_BASE;
 let heldItem = null;
 const roul = {active:false, t:0, pick:0, tickT:0};
@@ -278,10 +308,17 @@ const GUNS = [
 ];
 const BALLGUN = {name:'DISCO BALL', dmg:8, spread:0, range:680, maxB:2, bMult:1.6, beamW:2.2, color:'#ff9df5', pellets:1, sfx:'zap'};
 function effGun(g){
-  if(buffs.over<=0 && buffs.fever<=0) return g;
   const e=Object.assign({},g);
-  if(buffs.over>0) e.maxB=g.maxB+3;
-  if(buffs.fever>0) e.rof=g.rof*1.8;
+  if(buffs.over>0) e.maxB+=3;
+  if(buffs.fever>0) e.rof*=1.8;
+  if(buffs.triple>0){ e.pellets+=2; e.spread=Math.max(e.spread,0.12); }
+  if(buffs.bigshot>0){ e.dmg*=1.5; e.beamW*=2.4; e.rof*=0.6; }
+  if(upg.dmg) e.dmg*=1+0.15*upg.dmg;
+  if(upg.rof) e.rof*=1+0.2*upg.rof;
+  if(upg.bounce) e.maxB+=upg.bounce;
+  if(upg.mag) e.mag=Math.round(e.mag*(1+0.25*upg.mag));
+  if(upg.range) e.range*=1+0.2*upg.range;
+  if(upg.reload) e.rel*=Math.pow(0.75,upg.reload);
   return e;
 }
 
@@ -374,17 +411,29 @@ function fragLine(){
   return activeSlots().map(i=> (i===MP.you?'YOU ':'P'+(i+1)+' ')+MP.frags[i]).join('  ·  ');
 }
 function checkWin(){
-  for(let i=0;i<4;i++) if(MP.frags[i]>=10){
+  if(matchEndT>0) return;
+  for(let i=0;i<4;i++) if(MP.frags[i]>=KILL_TARGET){
+    matchWinner=i; matchEndT=6;
     announce(i===MP.you? '★ YOU TAKE THE CROWN ★':'☠ P'+(i+1)+' TAKES THE CROWN ☠');
-    MP.frags=[0,0,0,0];
     playOverlay('crown',7);
+    sting(i===MP.you?'yeah':'airhorn');
+    // everyone leaves the round with a weapon upgrade for the rematch
+    const u=UPGRADES[Math.floor(Math.random()*UPGRADES.length)];
+    upg[u.k]++;
+    lastReward=u.label+(upg[u.k]>1? '  (now ×'+upg[u.k]+')':'');
+    confettiBurst(P.x+P.w/2, P.y-30, 40);
     return;
   }
 }
 function applyDeath(who,by){
+  if(matchEndT>0) return; // scores frozen during the podium party
   if(by==null || by<0 || by===who) MP.frags[who]--;
   else MP.frags[by]++;
-  if(by===MP.you && who!==MP.you) announce('FRAG!  '+fragLine());
+  if(by===MP.you && who!==MP.you){
+    announce('FRAG!  '+fragLine());
+    const vp = who===MP.you? {x:P.x+P.w/2,y:P.y} : {x:peers[who].x+13,y:peers[who].y};
+    cheerKill(vp.x, vp.y);
+  }
   if(by!=null && by>=0 && by!==who) sting('airhorn',{fromNet:true}); // everyone already got 'died'
   checkWin();
 }
@@ -437,7 +486,7 @@ function onNet(m){
       if(m.to!==MP.you) break;
       lastAttacker=m.who;
       if(buffs.star>0){ popup(P.x+P.w/2,P.y-14,'BLOCKED','#ffe14d',14); break; }
-      damagePlayer(m.d, (m.kx!=null? {dx:m.kx, dy:m.ky||0} : 0), 'pvp', m.who);
+      damagePlayer(m.d, (m.kx!=null? {dx:m.kx, dy:m.ky||0, mul:m.kb||1} : 0), 'pvp', m.who);
       break;
     case 'died': applyDeath(m.who, m.by); break;
     case 'loot':
@@ -474,22 +523,24 @@ function initWorld(mode, stage){
   for(const p of peers){ Object.assign(p, newPeer()); }
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
+  matchEndT=0; matchWinner=-1; killFreezeT=0; streakN=0; streakT=0; orbitA=0; orbitFT=0;
   cam.x=clamp(P.x-VW/2,0,Math.max(0,W-VW)); cam.y=clamp(P.y-VH/2,0,Math.max(0,H-VH));
   psT=0; esnapT=0;
 }
 function startSolo(){
   MP.on=false; MP.mode='solo'; MP.isHost=true; MP.you=0;
+  resetUpgrades();
   initWorld('solo',0); state='play'; initAudio();
 }
 function hostRoom(mode){
   if(!net.ready){ menuNotice='multiplayer server offline'; return; }
-  initAudio();
+  initAudio(); resetUpgrades();
   const stage = mode==='vs'? (menuStageSel===0? Math.floor(Math.random()*STAGES.length) : menuStageSel-1) : 0;
   net.raw({t:'create', mode, stage});
 }
 function joinRoom(code){
   if(!net.ready){ menuNotice='multiplayer server offline'; return; }
-  initAudio(); net.raw({t:'join', code});
+  initAudio(); resetUpgrades(); net.raw({t:'join', code});
 }
 
 // ---------- input ----------
@@ -960,7 +1011,7 @@ function castSolids(x,y,dx,dy,maxDist){
   return best;
 }
 function startReload(){
-  const g=GUNS[P.gun];
+  const g=effGun(GUNS[P.gun]);
   if(P.reloadT>0 || P.ammo>=g.mag || P.deadT>0) return;
   P.reloadT=g.rel;
   P.chargeT=-1;
@@ -1047,7 +1098,8 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
       const d=Math.round(dmg);
       popup(hx+rnd(-6,6), hy-10, ''+d, '#ff9d2e', 14+bounces*3);
       sparks(hx,hy,'#ff9d2e',6,160);
-      net.send({t:'pvp', who:MP.you, to:hit.idx, d, b:bounces, kx:+dx.toFixed(2), ky:+dy.toFixed(2)});
+      net.send({t:'pvp', who:MP.you, to:hit.idx, d, b:bounces, kx:+dx.toFixed(2), ky:+dy.toFixed(2), kb:buffs.mega>0?2.5:1});
+      if(buffs.vamp>0){ P.hp=Math.min(P.maxHp, P.hp+Math.max(1,Math.round(d*0.3))); }
       break;
     }
     if(hit.kind==='self'){
@@ -1063,7 +1115,7 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
       const d=Math.max(1,Math.round(dmg*0.5));
       if(buffs.star>0) popup(hx,hy-10,'BLOCKED','#ffe14d',13);
       else{
-        damagePlayer(d, {dx,dy}, opts.fromBall?'ball':'self', opts.fromBall? opts.ballOwner : MP.you);
+        damagePlayer(d, {dx,dy,mul:buffs.mega>0?2.5:1}, opts.fromBall?'ball':'self', opts.fromBall? opts.ballOwner : MP.you);
         popup(hx,hy-22,'SELF BOUNCE!','#ff4d6d',12);
       }
       break;
@@ -1078,6 +1130,7 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
       if(damaging){
         if(MP.isHost || !MP.on) damageEnemy(hit.enemy, dmg, bounces, hx, hy);
         else clientHit(hit.enemy, dmg, bounces, hx, hy);
+        if(buffs.vamp>0 && opts.isLocal){ P.hp=Math.min(P.maxHp, P.hp+Math.max(1,Math.round(dmg*0.3))); }
       }
       if(pierced){ pierced.add(hit.enemy); x=hx+dx*0.6; y=hy+dy*0.6; skipM=null; if(range>0) continue; }
       break;
@@ -1132,6 +1185,7 @@ function damageEnemy(en,dmg,bounces,hx,hy){
     score+=pts;
     popup(en.x, (en.type==='prism'?en.y:en.y-en.h)-24, '+'+pts, '#7dff5e', 18);
     explosion(en.x, en.type==='prism'?en.y:en.y-en.h/2, en.type==='prism'?'#7de8ff':'#ff3df0');
+    cheerKill(en.x, en.type==='prism'?en.y:en.y-en.h/2);
     shake+=5; sfxKill();
     if(bounces>=2){
       announce(BOUNCE_HYPE[Math.min(bounces,5)] || 'APOCALYPSE ANGLES!!!');
@@ -1233,7 +1287,8 @@ function updateLoot(dt){
     for(let i=0;i<loot.length;i++){
       const b=loot[i];
       if(!b.active) continue;
-      if(rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},{x:b.x-18,y:b.y-18,w:36,h:36})){
+      const vac = buffs.magnet>0 && Math.hypot(b.x-(P.x+P.w/2), b.y-(P.y+P.h/2))<280;
+      if(vac || rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},{x:b.x-18,y:b.y-18,w:36,h:36})){
         b.active=false;
         if(MP.isHost || !MP.on) b.respawnT=8;
         let p=rollPowerup();
@@ -1322,6 +1377,14 @@ function applyPowerup(i){
       break; }
     case 'rubber': buffs.rubber=p.dur; break;
     case 'ghost': buffs.ghost=p.dur; break;
+    case 'magnet': buffs.magnet=p.dur; break;
+    case 'bigshot': buffs.bigshot=p.dur; break;
+    case 'triple': buffs.triple=p.dur; break;
+    case 'vamp': buffs.vamp=p.dur; break;
+    case 'pogo': buffs.pogo=p.dur; break;
+    case 'mega': buffs.mega=p.dur; break;
+    case 'wind': buffs.wind=p.dur; break;
+    case 'orbit': buffs.orbit=p.dur; orbitA=0; orbitFT=0.3; break;
     case 'swap': {
       const alive=[]; if(MP.on) for(let k=0;k<4;k++) if(k!==MP.you && peers[k].on && peers[k].hp>0) alive.push(k);
       sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
@@ -1424,6 +1487,24 @@ function explosion(x,y,color){
 }
 function popup(x,y,text,color,size){ popups.push({x,y,text,color,size,life:0.9,max:0.9}); if(popups.length>70)popups.shift(); }
 function announce(text){ announceTxt=text; announceT=1.6; }
+function confettiBurst(x,y,n){
+  for(let i=0;i<n;i++){
+    particles.push({x:x+rnd(-30,30), y:y+rnd(-20,20), vx:rnd(-90,90), vy:rnd(-80,30),
+      life:rnd(1,1.9), max:1.9, color:`hsl(${rnd(360)},95%,65%)`, size:rnd(3,5), grav:150, conf:true});
+  }
+  if(particles.length>800) particles.splice(0,particles.length-800);
+}
+const STREAK_HYPE={2:'DOUBLE KILL!',3:'TRIPLE KILL!!',4:'QUAD FEVER!',5:'RAMPAGE!!'};
+function cheerKill(x,y){
+  confettiBurst(x,y,18);
+  killFreezeT=0.07; // hitstop
+  hypeT=Math.min(hypeT+1.2,3);
+  streakN++; streakT=5;
+  if(streakN>=2){
+    announce(STREAK_HYPE[Math.min(streakN,5)]||'UNSTOPPABLE!!!');
+    sting(streakN>=4?'airhorn':'yeah');
+  }
+}
 
 // ---------- player ----------
 function tryDash(){
@@ -1566,6 +1647,10 @@ function updatePlayer(dt){
     popup(P.x+P.w/2,P.y-14,'BOING','#ffe14d',12);
     sfxNoise(0.14,0.35,600);
   }
+  if(P.grounded && !wasGrounded && buffs.pogo>0 && !keys.KeyS){ // pogo pants: auto-bounce (hold S to stop)
+    P.grounded=false; P.vy=-620;
+    sparks(P.x+P.w/2,P.y+P.h,'#7dff5e',6,150);
+  }
   if(P.grounded && !wasGrounded && P.dashT<=0) P.landLagT=0.1; // landing lag — dashing through the landing skips it
   if(P.grounded){ P.coyote=0.1; P.airJumps=1; P.canAirDash=true; }
   else if(wasGrounded) P.coyote=0.1;
@@ -1606,8 +1691,8 @@ function updatePlayer(dt){
 }
 // direction-aware knockback: spiked from above = slammed down (floor-bounce),
 // shot from below = launched, side hits = shoved.
-function hitKnock(dx,dy,dmg){
-  const k=clamp(dmg,5,60);
+function hitKnock(dx,dy,dmg,mul){
+  const k=clamp(dmg,5,60)*(mul||1);
   if(dy>0.65){
     if(P.grounded){ P.vy=-220; P.vx+=dx*k*6; shake+=4; }
     else{
@@ -1632,8 +1717,17 @@ function damagePlayer(d,knock,cause,by){
   // no free invulnerability after a hit — contact/hazard sources have their own tick cooldowns
   P.airJumps=1; P.canAirDash=true;
   popup(P.x+P.w/2,P.y-10,'-'+Math.min(d,150),'#ff4d6d',15);
-  if(knock && typeof knock==='object') hitKnock(knock.dx||0, knock.dy||0, d);
+  if(knock && typeof knock==='object') hitKnock(knock.dx||0, knock.dy||0, d, knock.mul||1);
   else if(knock){ P.vx=knock; P.vy=-300; }
+  if(P.hp<=0 && buffs.wind>0 && d<999){
+    // SECOND WIND: cheat death once
+    buffs.wind=0;
+    P.hp=Math.max(1,Math.round(P.maxHp*0.25));
+    announce('SECOND WIND!');
+    sparks(P.x+P.w/2,P.y+P.h/2,'#f0f4ff',16,260);
+    sting('wow');
+    return;
+  }
   if(P.hp<=0){
     P.hp=0; P.deadT=1.6; P.hook=null;
     explosion(P.x+P.w/2,P.y+P.h/2,myCol()); shake+=10; sfxKill();
@@ -1777,6 +1871,13 @@ function update(dt){
     if(browsePollT<=0){ browsePollT=3; net.raw({t:'list'}); }
   }
   if(state!=='play'||paused) return;
+  if(killFreezeT>0){ killFreezeT-=dt; return; } // hitstop: the world savors the kill
+  streakT-=dt; if(streakT<=0) streakN=0;
+  if(matchEndT>0){
+    matchEndT-=dt;
+    if(Math.random()<0.35) confettiBurst(cam.x+rnd(VW), cam.y+rnd(-40,0), 2); // podium confetti rain
+    if(matchEndT<=0 && MP.on && MP.isHost) net.raw({t:'rematch'}); // everyone back to the lobby
+  }
   matchT+=dt;
   helpT-=dt; announceT-=dt; escT-=dt; hurtVigT-=dt; shake=Math.max(0,shake-dt*22);
 
@@ -1787,6 +1888,23 @@ function update(dt){
   updateOrbs(dt);
   updateLoot(dt);
   updateBalls(dt);
+  // DISCO BUDDY: orbiting turret that pot-shots the nearest target
+  if(buffs.orbit>0 && P.deadT<=0){
+    orbitA+=dt*2.6; orbitFT-=dt;
+    const ox=P.x+P.w/2+Math.cos(orbitA)*70, oy=P.y+P.h/2+Math.sin(orbitA)*70;
+    if(orbitFT<=0){
+      let bt=null,bd=700;
+      for(const en of enemies){ if(en.dead) continue;
+        const ex=en.x, ey=en.type==='prism'?en.y:en.y-en.h/2;
+        const d0=Math.hypot(ex-ox,ey-oy); if(d0<bd){bd=d0;bt={x:ex,y:ey};} }
+      if(MP.on && MP.mode==='vs') for(let oi=0;oi<4;oi++){
+        if(oi===MP.you || !peers[oi].on || peers[oi].hp<=0) continue;
+        const pc0=peerCenter(oi); const d0=Math.hypot(pc0.x-ox,pc0.y-oy);
+        if(d0<bd){bd=d0;bt=pc0;} }
+      if(bt){ orbitFT=0.7; fireBeam(ox,oy,Math.atan2(bt.y-oy,bt.x-ox),BALLGUN,1,{isLocal:true,maxB:2,quiet:true}); tone('triangle',1100,1500,0.06,0.12); }
+      else orbitFT=0.3;
+    }
+  }
   for(const pr of props) pr.cdT-=dt;
   hypeT=Math.max(0,hypeT-dt);
 
@@ -2087,6 +2205,17 @@ function drawWorld(){
     ctx.restore();
   }
 
+  // disco buddy turret
+  if(buffs.orbit>0 && P.deadT<=0){
+    const ox=P.x+P.w/2+Math.cos(orbitA)*70, oy=P.y+P.h/2+Math.sin(orbitA)*70;
+    ctx.save(); ctx.translate(ox,oy); ctx.rotate(orbitA*2);
+    ctx.shadowColor='#ff9df5'; ctx.shadowBlur=12;
+    ctx.fillStyle='#cfd8ea'; ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.fill();
+    ctx.strokeStyle='rgba(60,70,110,0.8)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(-7,0); ctx.lineTo(7,0); ctx.moveTo(0,-7); ctx.lineTo(0,7); ctx.stroke();
+    ctx.restore();
+  }
+
   // decoys — holographic dancers
   for(const d of decoys){
     const dc=CLASSES[d.cls||0];
@@ -2203,6 +2332,12 @@ function drawWorld(){
     const a=p.life/p.max;
     if(p.ring){ ctx.strokeStyle=p.color; ctx.globalAlpha=a; ctx.lineWidth=3;
       ctx.beginPath(); ctx.arc(p.x,p.y,(1-a)*280*(p.max||0.35)+8,0,TAU); ctx.stroke(); continue; }
+    if(p.conf){
+      ctx.fillStyle=p.color; ctx.globalAlpha=a;
+      const wob=Math.sin(p.life*7+p.size)*6;
+      ctx.fillRect(p.x+wob-p.size/2, p.y-p.size*0.3, p.size, p.size*0.6);
+      continue;
+    }
     ctx.fillStyle=p.color; ctx.globalAlpha= p.ghost? a*0.35 : a;
     ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);
   }
@@ -2335,8 +2470,8 @@ function drawHUD(){
     ctx.fillText('KILLS '+kills+'   ·   BEST BOUNCE ×'+bestBounce, VW/2, 60);
   }
   {
-    // your class + signature weapon
-    const C=CLASSES[P.cls], g=GUNS[P.gun], x=18, y=VH-96;
+    // your class + signature weapon (upgrades included)
+    const C=CLASSES[P.cls], g=effGun(GUNS[P.gun]), x=18, y=VH-96;
     ctx.fillStyle='rgba(20,16,50,0.9)';
     ctx.beginPath(); ctx.roundRect(x,y,235,66,8); ctx.fill();
     ctx.strokeStyle=g.color; ctx.lineWidth=2; ctx.shadowColor=g.color; ctx.shadowBlur=8+6*pulse; ctx.stroke(); ctx.shadowBlur=0;
@@ -2412,12 +2547,38 @@ function drawHUD(){
     ctx.fillStyle='#fff'; ctx.font='bold 40px Segoe UI'; ctx.textAlign='center';
     ctx.fillText('PAUSED', VW/2, VH/2);
   }
-  if(P.deadT>0){
+  if(P.deadT>0 && matchEndT<=0){
     ctx.fillStyle='rgba(30,0,20,0.5)'; ctx.fillRect(0,0,VW,VH);
     ctx.fillStyle='#ff4d6d'; ctx.font='bold 38px Segoe UI'; ctx.textAlign='center';
     ctx.fillText('YOU GOT DROPPED', VW/2, VH/2-10);
     ctx.font='16px Segoe UI'; ctx.fillStyle='#fff';
     ctx.fillText('respawning on the beat…', VW/2, VH/2+24);
+  }
+  if(matchEndT>0){
+    // podium: winner's dancer performs while confetti rains and rewards roll in
+    ctx.fillStyle='rgba(6,2,18,0.72)'; ctx.fillRect(0,0,VW,VH);
+    const iWon = matchWinner===MP.you;
+    const wCls = iWon? myClass : (peers[matchWinner]? peers[matchWinner].cls||0 : 0);
+    const wCol = iWon? myColor : (peers[matchWinner] && peers[matchWinner].col!=null? peers[matchWinner].col : 0);
+    ctx.textAlign='center';
+    ctx.font='bold 44px Segoe UI';
+    ctx.fillStyle='#000'; ctx.fillText(iWon? 'YOU TAKE THE CROWN':'P'+(matchWinner+1)+' TAKES THE CROWN', VW/2+3, VH*0.22+3);
+    ctx.fillStyle=`hsl(${beatT*260%360},100%,65%)`; ctx.fillText(iWon? 'YOU TAKE THE CROWN':'P'+(matchWinner+1)+' TAKES THE CROWN', VW/2, VH*0.22);
+    // spinning crown over the champion
+    ctx.save(); ctx.translate(VW/2, VH*0.32); ctx.rotate(Math.sin(beatT*2)*0.15);
+    ctx.fillStyle='#ffe14d'; ctx.font='bold 34px Segoe UI'; ctx.fillText('♛', 0, 0); ctx.restore();
+    drawCharacter(wCls, wCol, VW/2, VH*0.62, 2.4, matchWinner+3);
+    ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(VW/2-140,VH*0.62); ctx.lineTo(VW/2+140,VH*0.62); ctx.stroke();
+    ctx.font='bold 16px Segoe UI'; ctx.fillStyle='#7dff5e';
+    ctx.fillText('ROUND REWARD: '+lastReward, VW/2, VH*0.7);
+    if(upgLine()){
+      ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.6)';
+      ctx.fillText('your arsenal: '+upgLine(), VW/2, VH*0.7+22);
+    }
+    ctx.font='13px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.fillText('back to the lobby in '+Math.ceil(matchEndT)+'…', VW/2, VH*0.7+46);
+    drawCardFx();
   }
   drawCrosshair();
 }
@@ -2470,7 +2631,7 @@ function drawCrosshair(){
   ctx.fillStyle=g.color; ctx.fillRect(mouse.x-1,mouse.y-1,2,2);
   if(P.reloadT>0){
     ctx.strokeStyle='#ffe14d'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(mouse.x,mouse.y,14,-Math.PI/2,-Math.PI/2+TAU*clamp(1-P.reloadT/GUNS[P.gun].rel,0,1)); ctx.stroke();
+    ctx.beginPath(); ctx.arc(mouse.x,mouse.y,14,-Math.PI/2,-Math.PI/2+TAU*clamp(1-P.reloadT/effGun(GUNS[P.gun]).rel,0,1)); ctx.stroke();
   }
 }
 
@@ -2889,6 +3050,10 @@ function drawLobby(){
   const rowY=y0+sh+24;
   drawClassRow(VW/2,rowY,cw,ch,true);
   drawSwatchRow(VW/2,rowY+ch+22);
+  if(upgLine()){
+    ctx.textAlign='center'; ctx.font='bold 12px Segoe UI'; ctx.fillStyle='#7dff5e';
+    ctx.fillText('ROUND UPGRADES: '+upgLine(), VW/2, rowY+ch+44);
+  }
   const canStart = MP.isHost && li.players.length>=2;
   const byy=Math.min(VH-56, rowY+ch+44);
   if(MP.isHost){
@@ -2950,6 +3115,8 @@ window.LR4 = {
   typeCode(s){ codeInput=(s||'').toUpperCase().slice(0,4); },
   setVol(k,v){ if(k in vol){ vol[k]=clamp(v,0,1); applyVolumes(); saveVol(); } },
   hitFrom(dx,dy,d){ hitKnock(dx,dy,d||20); },
+  winTest(){ MP.frags[MP.you]=KILL_TARGET; checkWin(); },
+  upg:()=>({...upg}),
   spawnOrb(x,y,vx,vy){ orbs.push({x,y,vx,vy,life:6}); },
   mirrorsDbg:()=>playerMirrors.map(m=>({id:m.id,hp:m.hp,x:m.x,y:m.y,angle:m.angle})),
   orbs:()=>orbs.map(o=>({x:Math.round(o.x),y:Math.round(o.y),vx:Math.round(o.vx),vy:Math.round(o.vy),r:!!o.reflected})),
