@@ -212,18 +212,175 @@ const STAGE_PROPS = [
 ];
 let solids=[], fixedMirrors=[], enemies=[], hazards=[], spawns=[], loot=[], props=[];
 let stageIdx=0;
+function loadStageData(d){
+  solids=BORDERS.concat(d.solids);
+  fixedMirrors=d.mirrors||[];
+  enemies=d.enemies||[];
+  hazards=d.hazards||[];
+  spawns=d.spawns||[{x:200,y:1334}];
+  loot=(d.lootSpots||[]).map(s=>({x:s.x,y:s.y,active:true,respawnT:0}));
+  props=[];
+}
 function loadStage(i){
   stageIdx=clamp(i|0,0,STAGES.length-1);
-  const d=STAGES[stageIdx].build();
-  solids=BORDERS.concat(d.solids);
-  fixedMirrors=d.mirrors;
-  enemies=d.enemies;
-  hazards=d.hazards||[];
-  spawns=d.spawns;
-  loot=d.lootSpots.map(s=>({x:s.x,y:s.y,active:true,respawnT:0}));
+  loadStageData(STAGES[stageIdx].build());
   props=(STAGE_PROPS[stageIdx]||[]).map(p=>Object.assign({r:18,cdT:0},p));
 }
 loadStage(0);
+
+// ---------- SOLO GAUNTLET: missions with goals, puzzles, and bullet hell ----------
+const MISSIONS=[
+ {id:'angles', name:'ANGLE SCHOOL', desc:'puzzle · warm up those bounces', goal:'Shatter every prism', type:'clear',
+  build(){ return {
+    solids:[
+      {x:0,y:1380,w:W,h:140,floor:true},
+      {x:1200,y:1080,w:360,h:30},
+      {x:1750,y:1180,w:40,h:200},
+      {x:2400,y:900,w:40,h:480},
+    ],
+    mirrors:[{x:950,y:1120,angle:45,len:110},{x:2200,y:1000,angle:-35,len:120}],
+    lootSpots:[],
+    enemies:[ makePrism(1380,1160,1,40), makePrism(1900,1300,2,40), makePrism(2600,1300,2,40) ],
+    hazards:[], spawns:[{x:200,y:1334}],
+  };}},
+ {id:'box', name:'THE UNSHOOTABLE BOX', desc:'puzzle · thread the needle', goal:'Shatter the boxed prisms', type:'clear',
+  build(){ return {
+    solids:[
+      {x:0,y:1380,w:W,h:140,floor:true},
+      {x:1600,y:1000,w:400,h:36},
+      {x:1600,y:1036,w:36,h:344},
+      {x:1964,y:1156,w:36,h:224},
+      {x:2600,y:1100,w:300,h:24, drop:true},
+    ],
+    mirrors:[{x:2250,y:1090,angle:90,len:150}],
+    lootSpots:[{x:400,y:1330}],
+    enemies:[ makePrism(1800,1300,3,60), makePrism(2750,1230,2,50) ],
+    hazards:[], spawns:[{x:200,y:1334}],
+  };}},
+ {id:'rush', name:'RUSH HOUR', desc:'timed · no respawns, no mercy', goal:'Clear every target in 60s', type:'timed', timeLimit:60,
+  build(){ return {
+    solids:[
+      {x:0,y:1380,w:W,h:140,floor:true},
+      {x:700,y:1100,w:300,h:26, drop:true},
+      {x:1500,y:950,w:300,h:26, drop:true},
+      {x:2300,y:1100,w:300,h:26, drop:true},
+      {x:3000,y:900,w:44,h:480},
+    ],
+    mirrors:[{x:1350,y:700,angle:0,len:260},{x:3200,y:1000,angle:90,len:200}],
+    lootSpots:[{x:1650,y:900},{x:3300,y:1330}],
+    enemies:[
+      makeBot(500,380,700,1380), makeBot(850,720,970,1100), makeBot(1650,1520,1770,950),
+      makeBot(2450,2320,2570,1100), makeBot(2800,2650,2950,1380),
+      makePrism(3300,1150,1,50), makePrism(1200,1300,2,60),
+    ],
+    hazards:[], spawns:[{x:150,y:1334}],
+  };}},
+ {id:'storm', name:'ORB STORM', desc:'bullet hell · dance or die', goal:'Survive 45 seconds', type:'survive', surviveTime:45,
+  build(){ return {
+    solids:[
+      {x:0,y:1380,w:W,h:140,floor:true},
+      {x:1600,y:1000,w:400,h:26, drop:true},
+      {x:700,y:1150,w:220,h:24, drop:true},
+      {x:2700,y:1150,w:220,h:24, drop:true},
+    ],
+    mirrors:[],
+    lootSpots:[{x:1800,y:960}],
+    enemies:[],
+    hazards:[], spawns:[{x:1787,y:1334}],
+  };}},
+ {id:'boss', name:'THE MIRRORBALL', desc:'boss · it stares back', goal:'Shatter the giant Mirrorball', type:'boss',
+  build(){ return {
+    solids:[
+      {x:0,y:1380,w:W,h:140,floor:true},
+      {x:900,y:1000,w:240,h:24, drop:true},
+      {x:2660,y:1000,w:240,h:24, drop:true},
+      {x:1700,y:760,w:200,h:22, drop:true},
+    ],
+    mirrors:[{x:500,y:900,angle:90,len:220},{x:3100,y:900,angle:90,len:220}],
+    lootSpots:[{x:1020,y:960},{x:2780,y:960}],
+    enemies:[ Object.assign(makePrism(1800,700,1,600),{r:58,boss:true}) ],
+    hazards:[], spawns:[{x:200,y:1334}],
+  };}},
+];
+let mission=null, missionIdx=-1, missionOver=0, pendingStage=null; // missionOver: 0 playing, 1 win, 2 fail
+let doneMissions=new Set();
+try{ doneMissions=new Set(JSON.parse(localStorage.getItem('lr4_missions')||'[]')); }catch(e){}
+function saveMissions(){ try{ localStorage.setItem('lr4_missions', JSON.stringify([...doneMissions])); }catch(e){} }
+function startMission(i){
+  missionIdx=clamp(i|0,0,MISSIONS.length-1);
+  const def=MISSIONS[missionIdx];
+  mission={def, t:0, spawnT:0, spiralA:0, sideT:2.5, side:1, ringT:3, volleyT:4, sp1:false, sp2:false};
+  missionOver=0;
+  MP.on=false; MP.mode='solo'; MP.isHost=true; MP.you=0;
+  resetUpgrades();
+  pendingStage=def.build();
+  initWorld('mission',0);
+  state='play'; initAudio();
+  announce(def.name);
+}
+function missionWin(){
+  if(missionOver) return;
+  missionOver=1;
+  doneMissions.add(mission.def.id); saveMissions();
+  announce('STAGE CLEAR!');
+  confettiBurst(P.x+P.w/2,P.y-30,40);
+  sting('yeah'); playOverlay('crown',5);
+}
+function missionFail(reason){
+  if(missionOver) return;
+  missionOver=2;
+  announce(reason||'WRECKED');
+  playOverlay('dead',3);
+}
+function missionTick(dt){
+  const m=mission; if(!m||missionOver) return;
+  m.t+=dt;
+  const def=m.def;
+  if(def.id==='storm'){
+    // twin spiral from the ceiling + aimed fans from alternating walls
+    m.spiralA+=dt*2.0; m.spawnT-=dt;
+    if(m.spawnT<=0){
+      m.spawnT=0.22;
+      for(const off of [0,Math.PI]){
+        const a=m.spiralA+off;
+        orbs.push({x:1800,y:300,vx:Math.cos(a)*250,vy:Math.abs(Math.sin(a))*250+60,life:8});
+      }
+    }
+    m.sideT-=dt;
+    if(m.sideT<=0){
+      m.sideT=3; m.side*=-1;
+      const sx=m.side>0? 80:W-80, sy=1050;
+      const an=Math.atan2((P.y+P.h/2)-sy,(P.x+P.w/2)-sx);
+      for(const k of [-0.18,0,0.18]) orbs.push({x:sx,y:sy,vx:Math.cos(an+k)*300,vy:Math.sin(an+k)*300,life:8});
+      tone('sine',700,300,0.2,0.2);
+    }
+    if(m.t>=def.surviveTime) missionWin();
+  } else if(def.id==='boss'){
+    const b=enemies[0];
+    if(!b || b.dead){ missionWin(); return; }
+    b.x=1800+Math.sin(m.t*0.45)*620;
+    b.y=700+Math.sin(m.t*0.9)*180;
+    m.ringT-=dt;
+    if(m.ringT<=0){
+      m.ringT=4;
+      for(let a2=0;a2<12;a2++){ const an=a2/12*TAU+m.t;
+        orbs.push({x:b.x,y:b.y,vx:Math.cos(an)*220,vy:Math.sin(an)*220,life:9}); }
+      tone('sawtooth',200,90,0.3,0.3);
+    }
+    m.volleyT-=dt;
+    if(m.volleyT<=0){
+      m.volleyT=2.6;
+      const an=Math.atan2(P.y+P.h/2-b.y, P.x+P.w/2-b.x);
+      for(const k of [-0.22,0,0.22]) orbs.push({x:b.x,y:b.y,vx:Math.cos(an+k)*310,vy:Math.sin(an+k)*310,life:8});
+    }
+    if(!m.sp1 && b.hp<400){ m.sp1=true; enemies.push(makeBot(1200,1000,1500,1380)); announce('MINIONS!'); }
+    if(!m.sp2 && b.hp<200){ m.sp2=true; enemies.push(makeBot(2400,2100,2600,1380)); }
+  }
+  if(def.type==='clear' || def.type==='timed'){
+    if(enemies.length && enemies.every(e=>e.dead)) missionWin();
+    if(def.type==='timed' && m.t>def.timeLimit) missionFail('TIME UP!');
+  }
+}
 
 let playerMirrors = [];
 let mirrorIdSeq = 0;
@@ -329,7 +486,7 @@ const P = {
   coyote:0, jumpBuf:0, airJumps:1, dropT:0,
   dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true, dashGround:false, landLagT:0,
   hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0, hurtT:0,
-  contactCd:0, hazardCd:0, mirrorCd:0,
+  contactCd:0, hazardCd:0, mCharges:3, mRegenT:0,
   gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0, ammo:12, reloadT:0,
   facing:1, hook:null, spawn:{x:140,y:1334},
 };
@@ -507,7 +664,9 @@ function onNet(m){
   }
 }
 function initWorld(mode, stage){
-  loadStage(mode==='vs'? (stage||0) : 0);
+  if(mode==='mission' && pendingStage){ loadStageData(pendingStage); pendingStage=null; }
+  else loadStage(mode==='vs'? (stage||0) : 0);
+  if(mode!=='mission'){ mission=null; missionOver=0; }
   if(mode==='vs') enemies=[]; // FACE-OFF is pure PvP — no bots, no prisms, just dancers
   playerMirrors=[]; mirrorIdSeq=0; mirrorMax=MIRROR_BASE;
   orbs=[]; beams=[]; particles=[]; popups=[]; balls=[]; decoys=[];
@@ -519,7 +678,8 @@ function initWorld(mode, stage){
   const sp = spawns[MP.on? MP.you : 0] || spawns[0];
   P.spawn=sp; P.x=sp.x; P.y=sp.y-(C.h-46); P.vx=P.vy=0; P.hp=C.hp; P.deadT=0; P.invulnT=1;
   P.gun=C.gun; P.chargeT=-1; P.hook=null; P.airJumps=1; P.canAirDash=true; P.dashT=0; P.dashCd=0; P.blinkCd=0; P.spikedT=0;
-  P.ammo=GUNS[C.gun].mag; P.reloadT=0; P.contactCd=0; P.hazardCd=0; P.mirrorCd=0; P.landLagT=0; P.dashGround=false;
+  P.ammo=GUNS[C.gun].mag; P.reloadT=0; P.contactCd=0; P.hazardCd=0; P.landLagT=0; P.dashGround=false;
+  P.mCharges=mirrorMax; P.mRegenT=0;
   for(const p of peers){ Object.assign(p, newPeer()); }
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
@@ -551,6 +711,7 @@ window.addEventListener('keydown',e=>{
   if(state!=='play'){
     if(state==='lobby' && e.code==='Escape') leaveToMenu('');
     if(state==='select' && e.code==='Escape') state='menu';
+    if(state==='missions' && e.code==='Escape') state='menu';
     if(state==='browse'){
       if(e.code==='Escape'){ state='menu'; }
       else if(e.code==='Backspace'){ codeInput=codeInput.slice(0,-1); }
@@ -575,6 +736,17 @@ window.addEventListener('keydown',e=>{
     return;
   }
   if(paused) return;
+  if(mission && missionOver){
+    if(e.code==='Space'){
+      if(missionOver===1){
+        const nx=missionIdx+1;
+        if(nx<MISSIONS.length) startMission(nx);
+        else { mission=null; leaveToMenu(''); state='missions'; }
+      } else startMission(missionIdx);
+      return;
+    }
+    return; // other inputs frozen on the results screen (ESC handled above)
+  }
   if(e.code==='Space') P.jumpBuf=0.12; // SPACE jumps; W is just "up" for dash aiming
   if(e.code==='ShiftLeft'||e.code==='ShiftRight') tryDash();
   if(e.code==='KeyS'&&P.onOneWay) P.dropT=0.22;
@@ -601,7 +773,7 @@ function updateSliderDrag(){
   applyVolumes();
 }
 canvas.addEventListener('mousedown',e=>{
-  if(state==='menu'||state==='lobby'||state==='select'||state==='browse'){
+  if(state==='menu'||state==='lobby'||state==='select'||state==='browse'||state==='missions'){
     if(e.button!==0) return;
     for(const s of menuSliders){
       if(mouse.x>=s.x-8&&mouse.x<=s.x+s.w+8&&mouse.y>=s.y-10&&mouse.y<=s.y+s.h+10){
@@ -1244,10 +1416,10 @@ function ghostValid(mx,my){
   for(const om of allMirrors()) if(Math.hypot(om.x-mx,om.y-my)<55) return false;
   return true;
 }
-const MIRROR_CD = 2.0; // seconds between placements — mirrors are infinite but not spammable
+const MIRROR_REGEN = 1.5; // charges refill 1 per 1.5s — spam your whole inventory, then wait
 function tryPlaceMirror(){
   const mx=mouse.x+cam.x, my=mouse.y+cam.y;
-  if(P.mirrorCd>0){ sfxClink(); popup(mx,my,'MIRROR RECHARGING','#9aa7c7',12); return; }
+  if(P.mCharges<1){ sfxClink(); popup(mx,my,'NO MIRRORS — RECHARGING','#9aa7c7',12); return; }
   if(!ghostValid(mx,my)){ sfxClink(); return; }
   const mine=myMirrors();
   if(mine.length>=mirrorMax){
@@ -1258,7 +1430,7 @@ function tryPlaceMirror(){
   }
   const m={id:'m'+MP.you+'-'+(mirrorIdSeq++), x:mx,y:my,angle:ghostAngle,len:90,player:true,owner:MP.you,hp:MIRROR_HP};
   playerMirrors.push(m);
-  P.mirrorCd=MIRROR_CD;
+  P.mCharges--;
   sfxPlace(); sparks(mx,my,'#7dff5e',8,140);
   net.send({t:'mplace', m});
 }
@@ -1270,6 +1442,7 @@ function pickupMirror(){
   }
   if(best){
     playerMirrors=playerMirrors.filter(m=>m!==best);
+    P.mCharges=Math.min(mirrorMax,P.mCharges+1); // picking one up refunds a charge
     sfxUI(880); sparks(best.x,best.y,'#7dff5e',6,120);
     net.send({t:'mpick', id:best.id});
   }
@@ -1339,7 +1512,7 @@ function applyPowerup(i){
   tone('sine',700,1400,0.25,0.3); tone('sine',1050,2100,0.35,0.2);
   switch(p.id){
     case 'heal': P.hp=Math.min(P.maxHp,P.hp+40); popup(P.x+P.w/2,P.y-16,'+40','#7dff5e',18); break;
-    case 'mirror': mirrorMax=Math.min(MIRROR_CAP,mirrorMax+1); popup(P.x+13,P.y-16,'CAP '+mirrorMax,'#7dff5e',15); break;
+    case 'mirror': mirrorMax=Math.min(MIRROR_CAP,mirrorMax+1); P.mCharges=Math.min(mirrorMax,P.mCharges+1); popup(P.x+P.w/2,P.y-16,'CAP '+mirrorMax,'#7dff5e',15); break;
     case 'fever': buffs.fever=p.dur; break;
     case 'amp': buffs.amp=p.dur; break;
     case 'over': buffs.over=p.dur; break;
@@ -1598,7 +1771,9 @@ function updatePlayer(dt){
     else P.vy=Math.min(P.vy+g*dt,1150);
   }
   P.dashCd-=dt; P.coyote-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
-  P.contactCd-=dt; P.hazardCd-=dt; P.mirrorCd-=dt; P.landLagT-=dt;
+  P.contactCd-=dt; P.hazardCd-=dt; P.landLagT-=dt;
+  if(P.mCharges<mirrorMax){ P.mRegenT+=dt; if(P.mRegenT>=MIRROR_REGEN){ P.mRegenT=0; P.mCharges++; } }
+  else P.mRegenT=0;
   if(!(P.dashT>0 && !P.grounded)) P.jumpBuf-=dt; // air dash: hold the buffered jump until the dash ends
 
   if(P.jumpBuf>0 && !(P.dashT>0 && !P.grounded) && !(P.grounded && P.landLagT>0)){
@@ -1729,9 +1904,10 @@ function damagePlayer(d,knock,cause,by){
     return;
   }
   if(P.hp<=0){
-    P.hp=0; P.deadT=1.6; P.hook=null;
+    P.hp=0; P.deadT= mission? 9e9 : 1.6; P.hook=null;
     explosion(P.x+P.w/2,P.y+P.h/2,myCol()); shake+=10; sfxKill();
-    playOverlay('dead',3);
+    if(mission){ missionFail('YOU GOT DROPPED'); }
+    else playOverlay('dead',3);
     if(MP.on && MP.mode==='vs'){
       let deathBy = MP.you; // suicide by default (hazards, bots, own bounces)
       if(cause==='pvp') deathBy = (by!=null&&by>=0)? by : lastAttacker;
@@ -1763,7 +1939,8 @@ function nearestTarget(en){
 }
 function updateEnemiesHost(dt){
   for(const en of enemies){
-    if(en.dead){ en.respawnT-=dt; if(en.respawnT<=0){ en.dead=false; en.hp=en.maxHp; en.x=en.sx; en.y=en.sy; } continue; }
+    if(en.dead){ if(mission) continue; // missions: kills are permanent
+      en.respawnT-=dt; if(en.respawnT<=0){ en.dead=false; en.hp=en.maxHp; en.x=en.sx; en.y=en.sy; } continue; }
     if(en.type==='bot'){
       en.x+=en.dir*60*dt;
       if(en.x<en.patrolL){en.x=en.patrolL;en.dir=1;}
@@ -1888,6 +2065,7 @@ function update(dt){
   updateOrbs(dt);
   updateLoot(dt);
   updateBalls(dt);
+  missionTick(dt);
   // DISCO BUDDY: orbiting turret that pot-shots the nearest target
   if(buffs.orbit>0 && P.deadT<=0){
     orbitA+=dt*2.6; orbitFT-=dt;
@@ -2353,7 +2531,7 @@ function drawWorld(){
 
   if(placing||rmbGhost){
     const mx=mouse.x+cam.x, my=mouse.y+cam.y;
-    const ok=ghostValid(mx,my) && P.mirrorCd<=0;
+    const ok=ghostValid(mx,my) && P.mCharges>=1;
     const e=segPts({x:mx,y:my,angle:ghostAngle,len:90});
     ctx.setLineDash([7,6]);
     ctx.strokeStyle= ok? 'rgba(125,255,94,0.9)':'rgba(255,77,109,0.9)';
@@ -2362,7 +2540,7 @@ function drawWorld(){
     ctx.setLineDash([]);
     ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font='11px Segoe UI'; ctx.textAlign='center';
     const mine=myMirrors();
-    ctx.fillText(P.mirrorCd>0? ('⟳ '+P.mirrorCd.toFixed(1)+'s') : ghostAngle+'°'+(mine.length>=mirrorMax?' (recycles oldest)':''), mx, my-14);
+    ctx.fillText(P.mCharges<1? ('⟳ +1 in '+(MIRROR_REGEN-P.mRegenT).toFixed(1)+'s') : ghostAngle+'°'+(mine.length>=mirrorMax?' (recycles oldest)':''), mx, my-14);
   }
 
   ctx.restore();
@@ -2456,7 +2634,24 @@ function drawHUD(){
     ctx.fillText('ROOM '+MP.code+' · '+(MP.mode==='vs'?'FACE-OFF':'CO-OP')+' · '+STAGES[stageIdx].name+' · YOU = P'+(MP.you+1), 18, VH-112);
   }
   ctx.textAlign='center';
-  if(MP.on && MP.mode==='vs'){
+  if(mission){
+    const def=mission.def;
+    ctx.font='bold 18px Segoe UI';
+    ctx.fillStyle='#000'; ctx.fillText(def.name, VW/2+1, 33);
+    ctx.fillStyle='#ffe14d'; ctx.fillText(def.name, VW/2, 32);
+    let obj='';
+    if(def.type==='clear') obj=def.goal+' — LEFT: '+enemies.filter(e=>!e.dead).length;
+    else if(def.type==='timed') obj='TARGETS '+enemies.filter(e=>!e.dead).length+' · TIME '+Math.max(0,def.timeLimit-mission.t).toFixed(1);
+    else if(def.type==='survive') obj='SURVIVE '+Math.max(0,def.surviveTime-mission.t).toFixed(1)+'s';
+    else if(def.type==='boss') obj=def.goal;
+    ctx.font='bold 13px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.fillText(obj, VW/2, 54);
+    if(def.type==='boss' && enemies[0] && !enemies[0].dead){
+      const b=enemies[0];
+      ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.roundRect(VW/2-220,62,440,14,6); ctx.fill();
+      ctx.fillStyle='#ff4dd2'; ctx.beginPath(); ctx.roundRect(VW/2-217,65,434*clamp(b.hp/b.maxHp,0,1),8,4); ctx.fill();
+    }
+  } else if(MP.on && MP.mode==='vs'){
     ctx.font='bold 24px Segoe UI';
     ctx.fillStyle='#000'; ctx.fillText(fragLine(), VW/2+2, 42);
     ctx.fillStyle='#ffe14d'; ctx.fillText(fragLine(), VW/2, 40);
@@ -2511,7 +2706,7 @@ function drawHUD(){
   }
   ctx.textAlign='right'; ctx.font='bold 15px Segoe UI';
   ctx.fillStyle= placing? '#7dff5e':'#cfe8ff';
-  ctx.fillText('◇ MIRRORS '+myMirrors().length+'/'+mirrorMax+(P.mirrorCd>0? '  ⟳'+P.mirrorCd.toFixed(1):''), VW-20, VH-46);
+  ctx.fillText('◇ MIRRORS '+P.mCharges+'/'+mirrorMax+(P.mCharges<mirrorMax? '  ⟳+1 in '+(MIRROR_REGEN-P.mRegenT).toFixed(1)+'s':''), VW-20, VH-46);
   ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
   ctx.fillText('HOLD RMB = quick place · [E] place mode · [X] pick up · [T] sight '+(sightOn?'ON':'OFF'), VW-20, VH-28);
   if(placing){
@@ -2547,7 +2742,22 @@ function drawHUD(){
     ctx.fillStyle='#fff'; ctx.font='bold 40px Segoe UI'; ctx.textAlign='center';
     ctx.fillText('PAUSED', VW/2, VH/2);
   }
-  if(P.deadT>0 && matchEndT<=0){
+  if(mission && missionOver){
+    ctx.fillStyle= missionOver===1? 'rgba(4,22,10,0.7)':'rgba(30,0,20,0.7)';
+    ctx.fillRect(0,0,VW,VH);
+    ctx.textAlign='center';
+    ctx.font='bold 46px Segoe UI';
+    ctx.fillStyle='#000'; ctx.fillText(missionOver===1?'STAGE CLEAR ★':'STAGE FAILED', VW/2+3, VH*0.4+3);
+    ctx.fillStyle= missionOver===1? '#7dff5e':'#ff4d6d';
+    ctx.fillText(missionOver===1?'STAGE CLEAR ★':'STAGE FAILED', VW/2, VH*0.4);
+    ctx.font='15px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.fillText(mission.def.name+'  ·  '+mission.t.toFixed(1)+'s', VW/2, VH*0.4+34);
+    ctx.font='bold 15px Segoe UI'; ctx.fillStyle='#ffe14d';
+    ctx.fillText(missionOver===1
+      ? (missionIdx+1<MISSIONS.length? '[SPACE] next stage · [ESC] menu':'[SPACE] finish · [ESC] menu — GAUNTLET COMPLETE!')
+      : '[SPACE] retry · [ESC] menu', VW/2, VH*0.4+70);
+  }
+  if(P.deadT>0 && matchEndT<=0 && !(mission && missionOver)){
     ctx.fillStyle='rgba(30,0,20,0.5)'; ctx.fillRect(0,0,VW,VH);
     ctx.fillStyle='#ff4d6d'; ctx.font='bold 38px Segoe UI'; ctx.textAlign='center';
     ctx.fillText('YOU GOT DROPPED', VW/2, VH/2-10);
@@ -2659,6 +2869,8 @@ function drawMenu(){
     menuBtns.push({x:bxx,y:by,w:bw,h:bh,label,sub,action,enabled:enabled!==false}); by+=bh+11;
   };
   addBtn('SOLO PARTY','pick your dancer, then go',()=>{ initAudio(); state='select'; });
+  addBtn('SOLO GAUNTLET'+(doneMissions.size? '  ('+doneMissions.size+'/'+MISSIONS.length+')':''),
+    'puzzles · bullet hell · a boss',()=>{ initAudio(); state='missions'; });
   addBtn('HOST CO-OP','up to 4 dancers vs the bots',()=>hostRoom('coop'),net.ready);
   addBtn('HOST FACE-OFF','pure PvP · 1v1 up to 4 · first to 10',()=>hostRoom('vs'),net.ready);
   const stName = menuStageSel===0? 'RANDOM' : STAGES[menuStageSel-1].name;
@@ -2940,6 +3152,41 @@ function drawSelect(){
   drawCardFx();
   drawCursorDot();
 }
+function drawMissions(){
+  drawBg(); menuBtns=[]; menuSliders=[];
+  ctx.textAlign='center';
+  ctx.font='bold 34px Segoe UI';
+  ctx.fillStyle='#000'; ctx.fillText('SOLO GAUNTLET', VW/2+2, VH*0.11+2);
+  ctx.fillStyle=`hsl(${beatT*220%360},100%,65%)`; ctx.fillText('SOLO GAUNTLET', VW/2, VH*0.11);
+  ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillText(doneMissions.size+'/'+MISSIONS.length+' cleared · no upgrades, no respawns, just you', VW/2, VH*0.11+24);
+  const w=Math.min(600,VW-80), x=VW/2-w/2;
+  let y=VH*0.19;
+  for(let i=0;i<MISSIONS.length;i++){
+    const ms=MISSIONS[i], done=doneMissions.has(ms.id);
+    menuBtns.push({x,y,w,h:58,action:((mi)=>()=>startMission(mi))(i)});
+    const hov=mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+58;
+    ctx.fillStyle= hov? 'rgba(24,18,58,0.95)':'rgba(10,6,30,0.8)';
+    ctx.beginPath(); ctx.roundRect(x,y,w,58,10); ctx.fill();
+    ctx.strokeStyle= done? 'rgba(125,255,94,0.6)' : hov? '#00ffd9':'rgba(255,255,255,0.18)';
+    ctx.lineWidth=hov?2.5:1.5; ctx.stroke();
+    ctx.textAlign='left';
+    ctx.fillStyle= done? '#7dff5e':'#fff'; ctx.font='bold 16px Segoe UI';
+    ctx.fillText((done?'✓ ':'')+(i+1)+'. '+ms.name, x+18, y+25);
+    ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.font='11px Segoe UI';
+    ctx.fillText(ms.desc, x+18, y+43);
+    ctx.textAlign='right';
+    ctx.fillStyle='#ffe14d'; ctx.font='bold 11px Segoe UI';
+    ctx.fillText(ms.goal, x+w-16, y+25);
+    ctx.fillStyle= hov? '#00ffd9':'rgba(0,255,217,0.6)'; ctx.font='bold 13px Segoe UI';
+    ctx.fillText('PLAY ▶', x+w-16, y+44);
+    y+=66;
+  }
+  const back={x:VW/2-110,y:y+14,w:220,h:38,label:'◀ BACK [ESC]',action:()=>{ state='menu'; }};
+  menuBtns.push(back);
+  drawBigBtn(back,'rgba(60,10,30,0.9)','#ff4d6d');
+  drawCursorDot();
+}
 function drawBrowse(){
   drawBg(); menuBtns=[]; menuSliders=[];
   ctx.textAlign='center';
@@ -3085,6 +3332,7 @@ function frame(now){
   if(state==='menu') drawMenu();
   else if(state==='select') drawSelect();
   else if(state==='browse') drawBrowse();
+  else if(state==='missions') drawMissions();
   else if(state==='lobby') drawLobby();
   else { drawBg(); drawWorld(); drawHUD(); }
   requestAnimationFrame(frame);
@@ -3117,6 +3365,8 @@ window.LR4 = {
   hitFrom(dx,dy,d){ hitKnock(dx,dy,d||20); },
   winTest(){ MP.frags[MP.you]=KILL_TARGET; checkWin(); },
   upg:()=>({...upg}),
+  mission(i){ startMission(i); },
+  missionState:()=>mission? {id:mission.def.id, t:+mission.t.toFixed(1), over:missionOver, enemies:enemies.filter(e=>!e.dead).length, orbs:orbs.length} : null,
   spawnOrb(x,y,vx,vy){ orbs.push({x,y,vx,vy,life:6}); },
   mirrorsDbg:()=>playerMirrors.map(m=>({id:m.id,hp:m.hp,x:m.x,y:m.y,angle:m.angle})),
   orbs:()=>orbs.map(o=>({x:Math.round(o.x),y:Math.round(o.y),vx:Math.round(o.vx),vy:Math.round(o.vy),r:!!o.reflected})),

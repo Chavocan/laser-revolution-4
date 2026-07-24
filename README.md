@@ -57,6 +57,13 @@ game connects to it. Pipeline:
 
 Everyone playing on itch shares the same lobbies, room codes, and 4-player matches.
 
+## Solo Gauntlet
+
+Five missions with hard goals and saved progress (no upgrades, no enemy respawns):
+ANGLE SCHOOL and THE UNSHOOTABLE BOX (mirror-bounce puzzles), RUSH HOUR (clear all
+targets in 60s), ORB STORM (45s of bullet hell), THE MIRRORBALL (a giant boss prism
+with orb rings, aimed volleys, and minion phases). SPACE advances/retries, ESC exits.
+
 ## Lobby flow
 
 Host clicks HOST CO-OP / HOST FACE-OFF (stage selector cycles the VS arena, or RANDOM).
@@ -95,8 +102,9 @@ Fever Fire speeds them up.
 
 ## Mirrors
 
-- You may have **3 placed at once** (never consumed) — placing a 4th recycles your oldest.
-- Loot can raise your cap **+1 up to 6** for the match.
+- You carry an **inventory of mirror charges** (3, up to 6 via loot): spam them all at
+  once, then charges refill **1 per 1.5s**. Picking a mirror back up (X) refunds a charge.
+  Placing beyond your cap recycles your oldest.
 - **Player mirrors have 120 HP** — each bounce drains the beam's damage, so a lance
   chews through one in ~3 bounces while shredder pellets get ~30 (cracks grow as HP
   drops). Stage mirrors are indestructible.
