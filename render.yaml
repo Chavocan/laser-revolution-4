@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: laser-revolution-4
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
