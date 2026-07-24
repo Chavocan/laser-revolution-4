@@ -286,6 +286,7 @@ const P = {
   coyote:0, jumpBuf:0, airJumps:1, dropT:0,
   dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true,
   hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0, hurtT:0,
+  contactCd:0, hazardCd:0, mirrorCd:0,
   gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0, ammo:12, reloadT:0,
   facing:1, hook:null, spawn:{x:140,y:1334},
 };
@@ -410,7 +411,7 @@ function onNet(m){
       if(p.on && m.hp<p.hp) p.hurtT=0.3; // peer just took a hit — strobe them
       p.on=true; p.tx=m.x; p.ty=m.y; p.vx=m.vx||0;
       p.facing=m.f||1; p.aim=m.a||0; p.gun=m.g||0;
-      p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0;
+      p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0; p.dsh=m.dsh||0;
       if(m.cls!=null) p.cls=m.cls;
       if(m.col!=null) p.col=m.col;
       break; }
@@ -454,7 +455,7 @@ function initWorld(mode, stage){
   const sp = spawns[MP.on? MP.you : 0] || spawns[0];
   P.spawn=sp; P.x=sp.x; P.y=sp.y-(C.h-46); P.vx=P.vy=0; P.hp=C.hp; P.deadT=0; P.invulnT=1;
   P.gun=C.gun; P.chargeT=-1; P.hook=null; P.airJumps=1; P.canAirDash=true; P.dashT=0; P.dashCd=0; P.blinkCd=0; P.spikedT=0;
-  P.ammo=GUNS[C.gun].mag; P.reloadT=0;
+  P.ammo=GUNS[C.gun].mag; P.reloadT=0; P.contactCd=0; P.hazardCd=0; P.mirrorCd=0;
   for(const p of peers){ Object.assign(p, newPeer()); }
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
@@ -501,6 +502,7 @@ window.addEventListener('keydown',e=>{
   if(e.code==='Equal'||e.code==='NumpadAdd'){ vol.master=clamp(vol.master+0.05,0,1); applyVolumes(); saveVol(); popup(P.x+P.w/2,P.y-30,'VOL '+Math.round(vol.master*100)+'%','#cfe8ff',13); return; }
   if(e.code==='KeyH'){ helpPin=!helpPin; helpT=0; return; }
   if(e.code==='KeyT'){ sightOn=!sightOn; sfxUI(sightOn?700:400); return; }
+  if(e.code==='KeyN'){ const k=music.mainKey; if(k){ music.mainKey=null; setMainMusic(k); } return; } // skip track
   if(e.code==='Escape'){ // works in solo AND multiplayer: press twice to quit
     if(escT>0){ escT=0; leaveToMenu(''); }
     else escT=2.2;
@@ -776,8 +778,8 @@ function fireProp(i, fromNet){
 const MUSIC_SETS = {
   menu:  ['Start the Apocalypse.mp3'],
   lobby: ['Grate Expectations.mp3'],
-  coop:  ['Dancefloor Salvation v2.mp3','Prism Alley.mp3','Prism Alley v2.mp3'],
-  vs:    ['Frag Fever.mp3','Frag Fever v2.mp3'],
+  // all gameplay tracks share one shuffled pool so matches never sound samey
+  game:  ['Dancefloor Salvation v2.mp3','Prism Alley.mp3','Prism Alley v2.mp3','Frag Fever.mp3','Frag Fever v2.mp3'],
   star:  ['Mirrorball Lift.mp3','Mirrorball Lift v2.mp3'],
   danger:['Ten Percent Battery.mp3','Ten Percent Battery v2.mp3'],
   dead:  ['Dropped on the Beat.mp3'],
@@ -799,9 +801,19 @@ function musicNode(src){
   return n;
 }
 function pickTrack(key, avoid){
-  let list=(MUSIC_SETS[key]||[]).filter(s=>!music.broken[s]);
-  if(avoid && list.length>1) list=list.filter(s=>s!==avoid);
-  return list.length? list[Math.floor(Math.random()*list.length)] : null;
+  const all=(MUSIC_SETS[key]||[]).filter(s=>!music.broken[s]);
+  if(!all.length) return null;
+  if(all.length===1) return all[0];
+  // shuffle bag: play every track in the set before any repeats
+  music.bags=music.bags||{};
+  let bag=music.bags[key];
+  if(!bag || !bag.length){
+    bag=all.slice();
+    for(let i=bag.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=bag[i]; bag[i]=bag[j]; bag[j]=t; }
+    if(avoid && bag[bag.length-1]===avoid){ const t=bag[0]; bag[0]=bag[bag.length-1]; bag[bag.length-1]=t; }
+    music.bags[key]=bag;
+  }
+  return bag.pop();
 }
 function musicActive(){ return !!(music.main && !music.main.el.paused && !music.main.el.error); }
 function fadeGain(g,v,dur){
@@ -845,7 +857,7 @@ function playOverlay(key,dur){
 }
 function musicTick(dt){
   if(!audio) return;
-  setMainMusic(state==='play'? (MP.mode==='vs'?'vs':'coop') : state==='lobby'? 'lobby':'menu');
+  setMainMusic(state==='play'? 'game' : state==='lobby'? 'lobby':'menu');
   if(music.over){
     music.overT-=dt;
     if(music.overT<=0 || music.over.el.ended){
@@ -1144,8 +1156,10 @@ function ghostValid(mx,my){
   for(const om of allMirrors()) if(Math.hypot(om.x-mx,om.y-my)<55) return false;
   return true;
 }
+const MIRROR_CD = 2.0; // seconds between placements — mirrors are infinite but not spammable
 function tryPlaceMirror(){
   const mx=mouse.x+cam.x, my=mouse.y+cam.y;
+  if(P.mirrorCd>0){ sfxClink(); popup(mx,my,'MIRROR RECHARGING','#9aa7c7',12); return; }
   if(!ghostValid(mx,my)){ sfxClink(); return; }
   const mine=myMirrors();
   if(mine.length>=mirrorMax){
@@ -1156,6 +1170,7 @@ function tryPlaceMirror(){
   }
   const m={id:'m'+MP.you+'-'+(mirrorIdSeq++), x:mx,y:my,angle:ghostAngle,len:90,player:true,owner:MP.you,hp:MIRROR_HP};
   playerMirrors.push(m);
+  P.mirrorCd=MIRROR_CD;
   sfxPlace(); sparks(mx,my,'#7dff5e',8,140);
   net.send({t:'mplace', m});
 }
@@ -1321,7 +1336,7 @@ function announce(text){ announceTxt=text; announceT=1.6; }
 
 // ---------- player ----------
 function tryDash(){
-  if(P.dashCd>0 || P.dashT>0 || placing) return;
+  if(P.dashCd>0 || P.dashT>0) return; // dashing is allowed in mirror/build mode too
   if(!P.grounded && !P.canAirDash) return;
   let dx=(keys.KeyD?1:0)-(keys.KeyA?1:0);
   let dy=(keys.KeyS?1:0)-(keys.KeyW?1:0);
@@ -1407,6 +1422,7 @@ function updatePlayer(dt){
     else P.vy=Math.min(P.vy+g*dt,1150);
   }
   P.dashCd-=dt; P.coyote-=dt; P.jumpBuf-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
+  P.contactCd-=dt; P.hazardCd-=dt; P.mirrorCd-=dt;
 
   if(P.jumpBuf>0){
     if(P.grounded||P.coyote>0){ P.vy=-680; P.grounded=false; P.coyote=0; P.jumpBuf=0; P.hook=null; P.dashT=0; } // jump cancels dash, momentum rides along
@@ -1458,13 +1474,13 @@ function updatePlayer(dt){
   else if(wasGrounded) P.coyote=0.1;
   if(P.wallL||P.wallR) P.canAirDash=true;
 
-  // hazards (invuln throttles zone ticks, but the death floor always kills)
+  // hazards tick on their own cooldown (the death floor always kills)
   for(const h of hazards){
-    if(P.invulnT>0 && h.dmg<999) continue;
+    if((P.hazardCd>0 || P.invulnT>0) && h.dmg<999) continue;
     let r=null;
     if(h.type==='zone') r={x:h.x,y:h.y,w:h.w,h:h.h};
     else if(h.type==='sweep'){ const sx=sweepX(h); r={x:sx-h.w/2,y:h.y,w:h.w,h:h.h}; }
-    if(r && rectsOverlap(box(),r)){ damagePlayer(h.dmg,0,'hazard',-1); break; }
+    if(r && rectsOverlap(box(),r)){ damagePlayer(h.dmg,0,'hazard',-1); P.hazardCd=0.5; break; }
   }
 
   P.fireCd-=dt; P.gunFlash-=dt;
@@ -1516,7 +1532,7 @@ function damagePlayer(d,knock,cause,by){
   P.hurtT=0.3; hurtVigT=0.35;
   sparks(P.x+P.w/2,P.y+P.h/2,'#ff4d6d',10,220);
   if(by!=null && by>=0) lastAttacker=by;
-  if(cause!=='self'&&cause!=='ball') P.invulnT=1;
+  // no free invulnerability after a hit — contact/hazard sources have their own tick cooldowns
   P.airJumps=1; P.canAirDash=true;
   popup(P.x+P.w/2,P.y-10,'-'+Math.min(d,150),'#ff4d6d',15);
   if(knock && typeof knock==='object') hitKnock(knock.dx||0, knock.dy||0, d);
@@ -1584,11 +1600,14 @@ function updateEnemiesClient(dt){
   }
 }
 function updateEnemyContact(){
-  if(P.deadT>0) return;
+  if(P.deadT>0 || P.contactCd>0) return;
   for(const en of enemies){
     if(en.dead || en.type!=='bot') continue;
-    if(rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},{x:en.x-en.w/2,y:en.y-en.h,w:en.w,h:en.h}))
+    if(rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},{x:en.x-en.w/2,y:en.y-en.h,w:en.w,h:en.h})){
       damagePlayer(20, Math.sign(P.x+P.w/2-en.x)*400, 'bot', -1);
+      P.contactCd=0.8;
+      break;
+    }
   }
 }
 function updateOrbs(dt){
@@ -1687,7 +1706,7 @@ function update(dt){
       net.send({t:'ps', who:MP.you, x:Math.round(P.x), y:Math.round(P.y), vx:Math.round(P.vx),
         f:P.facing, a:+aimAngle().toFixed(2), g:P.gun, hp:Math.round(P.deadT>0?0:P.hp),
         s:buffs.star>0?1:0, su:buffs.suit>0?1:0, hk:P.hook?[Math.round(P.hook.x),Math.round(P.hook.y)]:0,
-        cls:P.cls, col:myColor});
+        dsh:P.dashT>0?1:0, cls:P.cls, col:myColor});
     }
     if(MP.isHost){
       esnapT-=dt;
@@ -1974,6 +1993,7 @@ function drawWorld(){
     const p=peers[i];
     if(i===MP.you || !p.on || p.hp<=0) continue;
     const pc=peerCls(i);
+    if(p.dsh) drawDashShell(p.x+pc.w/2, p.y+pc.h/2, pc.w, pc.h);
     const pcol = (p.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : peerColor(i);
     drawDancer(p.x, p.y, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, 'P'+(i+1), p.cls||0);
     if(p.suit>0){
@@ -2018,6 +2038,7 @@ function drawWorld(){
   }
 
   if(P.deadT<=0){
+    if(P.dashT>0) drawDashShell(P.x+P.w/2, P.y+P.h/2, P.w, P.h);
     if(P.invulnT>0 && Math.floor(beatT*14)%2===0) ctx.globalAlpha=0.35;
     const lcol = (P.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : myCol();
     drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?'YOU':null, P.cls);
@@ -2069,7 +2090,7 @@ function drawWorld(){
 
   if(placing||rmbGhost){
     const mx=mouse.x+cam.x, my=mouse.y+cam.y;
-    const ok=ghostValid(mx,my);
+    const ok=ghostValid(mx,my) && P.mirrorCd<=0;
     const e=segPts({x:mx,y:my,angle:ghostAngle,len:90});
     ctx.setLineDash([7,6]);
     ctx.strokeStyle= ok? 'rgba(125,255,94,0.9)':'rgba(255,77,109,0.9)';
@@ -2078,9 +2099,18 @@ function drawWorld(){
     ctx.setLineDash([]);
     ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font='11px Segoe UI'; ctx.textAlign='center';
     const mine=myMirrors();
-    ctx.fillText(ghostAngle+'°'+(mine.length>=mirrorMax?' (recycles oldest)':''), mx, my-14);
+    ctx.fillText(P.mirrorCd>0? ('⟳ '+P.mirrorCd.toFixed(1)+'s') : ghostAngle+'°'+(mine.length>=mirrorMax?' (recycles oldest)':''), mx, my-14);
   }
 
+  ctx.restore();
+}
+function drawDashShell(cx,cy,w,h){
+  // untouchable while dashing — bright energy shell so everyone can read it
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.lineWidth=2.5;
+  ctx.shadowColor='#00ffd9'; ctx.shadowBlur=16;
+  ctx.setLineDash([10,6]); ctx.lineDashOffset=-beatT*90;
+  ctx.beginPath(); ctx.ellipse(cx,cy,w*0.95,h*0.72,0,0,TAU); ctx.stroke();
   ctx.restore();
 }
 function drawDancer(px,py,facing,aim,gunIdx,col,glow,flash,vx,tag,cls){
@@ -2218,7 +2248,7 @@ function drawHUD(){
   }
   ctx.textAlign='right'; ctx.font='bold 15px Segoe UI';
   ctx.fillStyle= placing? '#7dff5e':'#cfe8ff';
-  ctx.fillText('◇ MIRRORS '+myMirrors().length+'/'+mirrorMax, VW-20, VH-46);
+  ctx.fillText('◇ MIRRORS '+myMirrors().length+'/'+mirrorMax+(P.mirrorCd>0? '  ⟳'+P.mirrorCd.toFixed(1):''), VW-20, VH-46);
   ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
   ctx.fillText('HOLD RMB = quick place · [E] place mode · [X] pick up · [T] sight '+(sightOn?'ON':'OFF'), VW-20, VH-28);
   if(placing){
@@ -2286,6 +2316,7 @@ function drawHelp(){
     ['★ RED ZONES','hazards — do not dance there'],
     ['','—'],
     ['HELP / PAUSE / MUTE','H / P / M'],
+    ['SKIP TRACK','N'],
     ['QUIT TO MENU','ESC twice'],
   ];
   const x=VW-350, y=90, alpha= helpPin?0.92:clamp(helpT/2,0,0.92);
