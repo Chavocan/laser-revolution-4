@@ -32,6 +32,14 @@ let myClass = Math.max(0, Math.min(CLASSES.length-1, +(localStorage.getItem('lr4
 let myColor = Math.max(0, Math.min(COLORS.length-1, +(localStorage.getItem('lr4_color')||0)||0));
 function myCol(){ return COLORS[myColor]; }
 let lobbyPicks = {};
+let myName=(localStorage.getItem('lr4_name')||'').slice(0,10);
+let nameEdit=false;
+let myReady=false, lobbyReady={};
+function nameOf(i){
+  if(i===MP.you) return myName||('P'+(i+1));
+  const pk=lobbyPicks[i];
+  return (pk&&pk.name)? pk.name : 'P'+(i+1);
+}
 let firstLoot = true;          // first loot box each match pays out your class signature item
 
 // ---------- volume settings ----------
@@ -421,6 +429,10 @@ const POWERUPS = [
   {id:'mega',  name:'YEET MODE — 2.5x KNOCKBACK (8s)',     short:'YEET',     color:'#ffe14d', w:2, dur:8},
   {id:'wind',  name:'SECOND WIND — CHEAT DEATH ONCE (45s)',short:'2ND WIND', color:'#f0f4ff', w:2, dur:45},
   {id:'orbit', name:'DISCO BUDDY — ORBITING TURRET (12s)', short:'BUDDY',    color:'#ff9df5', w:2, dur:12},
+  {id:'gravgun',name:'GRAVITY GUN — YOUR HITS FLIP GRAVITY (8s)',short:'GRAV GUN',color:'#9ddcff',w:2, dur:8},
+  {id:'hole',  name:'BLACK HOLE — F TO DEPLOY AT CROSSHAIR',short:'BLACK HOLE',color:'#b44bff', w:2},
+  {id:'freeze',name:'FLASH FREEZE — ICE EVERYONE ELSE',     short:'FREEZE',   color:'#9ffcef', w:2},
+  {id:'hack',  name:'M1RR0R_M4N.EXE — HACK THEIR SCREENS',  short:'M1RR0R_M4N',color:'#00ff46',w:1},
 ];
 // item toggles: host controls them for a room (synced), you control them for solo
 let itemsOn={}, itemsReturn='menu';
@@ -442,7 +454,8 @@ function rollPowerup(){
   return pool[0];
 }
 const buffs = {fever:0, amp:0, over:0, star:0, hook:0, jet:0, moon:0, blink:0, suit:0, skate:0, tiny:0, rubber:0, ghost:0,
-  magnet:0, bigshot:0, triple:0, vamp:0, pogo:0, mega:0, wind:0, orbit:0};
+  magnet:0, bigshot:0, triple:0, vamp:0, pogo:0, mega:0, wind:0, orbit:0, gravgun:0};
+let holes=[], hackT=0, hackFrom=0, botFreezeT=0;
 
 // ---------- round-end weapon upgrades (persist across rematches in the same room) ----------
 const KILL_TARGET = 10;
@@ -499,7 +512,7 @@ const P = {
   coyote:0, jumpBuf:0, airJumps:1, dropT:0,
   dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true, dashGround:false, landLagT:0,
   hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0, hurtT:0,
-  contactCd:0, hazardCd:0, mCharges:3, mRegenT:0,
+  contactCd:0, hazardCd:0, mCharges:3, mRegenT:0, gravFlipT:0, frozenT:0, holePullT:0,
   gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0, ammo:12, reloadT:0,
   facing:1, hook:null, spawn:{x:140,y:1334},
 };
@@ -578,7 +591,7 @@ function activeSlots(){
   return l;
 }
 function fragLine(){
-  return activeSlots().map(i=> (i===MP.you?'YOU ':'P'+(i+1)+' ')+MP.frags[i]).join('  ·  ');
+  return activeSlots().map(i=> (i===MP.you? (myName||'YOU'):nameOf(i))+' '+MP.frags[i]).join('  ·  ');
 }
 function checkWin(){
   if(matchEndT>0) return;
@@ -613,15 +626,19 @@ function onNet(m){
     case 'lobby':
       lobbyInfo=m; MP.you=m.you; MP.code=m.code; MP.isHost=(m.you===0);
       state='lobby';
-      lobbyPicks[MP.you]={cls:myClass,col:myColor};
-      net.raw({t:'pick', who:MP.you, cls:myClass, col:myColor});
+      sendPickNow();
+      net.raw({t:'ready', who:MP.you, r:myReady?1:0});
       if(MP.isHost) net.raw({t:'items', off:itemsOffList()}); // sync item toggles to (re)joiners
       break;
     case 'pick':
-      lobbyPicks[m.who]={cls:m.cls||0, col:m.col};
+      lobbyPicks[m.who]={cls:m.cls||0, col:m.col, name:(m.name||'').slice(0,10)};
       if(peers[m.who]){ peers[m.who].cls=m.cls||0; peers[m.who].col=m.col; }
       break;
+    case 'ready':
+      lobbyReady[m.who]=!!m.r;
+      break;
     case 'start':
+      myReady=false; lobbyReady={}; // rematch lobbies need fresh lock-ins
       MP.on=true; MP.mode=m.mode; MP.you=m.you; MP.isHost=(m.you===0); MP.code=m.code;
       initWorld(m.mode, m.stage); state='play';
       announce((m.mode==='vs'? 'FACE-OFF · ':'CO-OP · ')+STAGES[stageIdx].name);
@@ -640,7 +657,7 @@ function onNet(m){
       if(p.on && m.hp<p.hp) p.hurtT=0.3; // peer just took a hit — strobe them
       p.on=true; p.tx=m.x; p.ty=m.y; p.vx=m.vx||0;
       p.facing=m.f||1; p.aim=m.a||0; p.gun=m.g||0;
-      p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0; p.dsh=m.dsh||0; p.gh=m.gh||0; p.tn=m.tn||0;
+      p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0; p.dsh=m.dsh||0; p.gh=m.gh||0; p.tn=m.tn||0; p.gv=m.gv||0; p.fz=m.fz||0;
       if(m.cls!=null) p.cls=m.cls;
       if(m.col!=null) p.col=m.col;
       break; }
@@ -652,12 +669,24 @@ function onNet(m){
     case 'esnap': applyEsnap(m); break;
     case 'orb': orbs.push({x:m.x,y:m.y,vx:m.vx,vy:m.vy,life:5}); break;
     case 'ball': balls.push({x:m.x,y:m.y,vx:m.vx,vy:m.vy,age:0,sprayT:0,owner:m.who}); break;
+    case 'hole': holes.push({x:m.x,y:m.y,t:4,owner:m.who,dmgT:0,eT:0}); break;
+    case 'freeze':
+      if(m.who!==MP.you){ P.frozenT=2.5; P.vx=0; P.vy=0; popup(P.x+P.w/2,P.y-20,'FROZEN!','#9ffcef',16); tone('triangle',1600,300,0.5,0.3); }
+      if(MP.isHost) botFreezeT=4;
+      break;
+    case 'hack':
+      if(m.who!==MP.you){
+        hackT=3; hackFrom=m.who;
+        tone('sawtooth',65,40,1.2,0.45); sfxNoise(0.8,0.35,300); tone('square',210,45,0.9,0.2);
+      }
+      break;
     case 'decoy': decoys.push({x:m.x,y:m.y,who:m.who,t:12,seed:rnd(10),cls:m.cls||0,col:m.col}); break;
     case 'pvp':
       if(m.to!==MP.you) break;
       lastAttacker=m.who;
       if(buffs.star>0){ popup(P.x+P.w/2,P.y-14,'BLOCKED','#ffe14d',14); break; }
       damagePlayer(m.d, (m.kx!=null? {dx:m.kx, dy:m.ky||0, mul:m.kb||1} : 0), 'pvp', m.who);
+      if(m.gf && P.deadT<=0){ P.gravFlipT=3; popup(P.x+P.w/2,P.y-32,'GRAVITY FLIPPED!','#9ddcff',14); }
       break;
     case 'died': applyDeath(m.who, m.by); break;
     case 'loot':
@@ -708,7 +737,8 @@ function initWorld(mode, stage){
   P.spawn=sp; P.x=sp.x; P.y=sp.y-(C.h-46); P.vx=P.vy=0; P.hp=C.hp; P.deadT=0; P.invulnT=1;
   P.gun=C.gun; P.chargeT=-1; P.hook=null; P.airJumps=1; P.canAirDash=true; P.dashT=0; P.dashCd=0; P.blinkCd=0; P.spikedT=0;
   P.ammo=GUNS[C.gun].mag; P.reloadT=0; P.contactCd=0; P.hazardCd=0; P.landLagT=0; P.dashGround=false;
-  P.mCharges=mirrorMax; P.mRegenT=0;
+  P.mCharges=mirrorMax; P.mRegenT=0; P.gravFlipT=0; P.frozenT=0;
+  holes=[]; hackT=0; botFreezeT=0;
   for(const p of peers){ Object.assign(p, newPeer()); }
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
@@ -723,13 +753,14 @@ function startSolo(){
 }
 function hostRoom(mode){
   if(!net.ready){ menuNotice='multiplayer server offline'; return; }
-  initAudio(); resetUpgrades();
+  initAudio(); resetUpgrades(); myReady=false; lobbyReady={};
   const stage = mode==='vs'? (menuStageSel===0? Math.floor(Math.random()*STAGES.length) : menuStageSel-1) : 0;
   net.raw({t:'create', mode, stage});
 }
 function joinRoom(code){
   if(!net.ready){ menuNotice='multiplayer server offline'; return; }
-  initAudio(); resetUpgrades(); net.raw({t:'join', code});
+  initAudio(); resetUpgrades(); myReady=false; lobbyReady={};
+  net.raw({t:'join', code});
 }
 
 // ---------- input ----------
@@ -738,6 +769,21 @@ window.addEventListener('keydown',e=>{
   if(keys[e.code]) return;
   keys[e.code]=true;
   if(state!=='play'){
+    if(nameEdit){
+      if(e.code==='Enter'||e.code==='Escape'){
+        nameEdit=false;
+        try{ localStorage.setItem('lr4_name', myName); }catch(err){}
+        sendPickNow();
+      }
+      else if(e.code==='Backspace') myName=myName.slice(0,-1);
+      else if(myName.length<10){
+        const mk=e.code.match(/^Key([A-Z])$/), md=e.code.match(/^Digit(\d)$/);
+        if(mk) myName+=mk[1]; else if(md) myName+=md[1];
+        else if(e.code==='Space') myName+=' ';
+        else if(e.code==='Minus') myName+='-';
+      }
+      return;
+    }
     if(state==='lobby' && e.code==='Escape') leaveToMenu('');
     if(state==='select' && e.code==='Escape') state='menu';
     if(state==='missions' && e.code==='Escape') state='menu';
@@ -1300,7 +1346,7 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
       const d=Math.round(dmg);
       popup(hx+rnd(-6,6), hy-10, ''+d, '#ff9d2e', 14+bounces*3);
       sparks(hx,hy,'#ff9d2e',6,160);
-      net.send({t:'pvp', who:MP.you, to:hit.idx, d, b:bounces, kx:+dx.toFixed(2), ky:+dy.toFixed(2), kb:buffs.mega>0?2.5:1});
+      net.send({t:'pvp', who:MP.you, to:hit.idx, d, b:bounces, kx:+dx.toFixed(2), ky:+dy.toFixed(2), kb:buffs.mega>0?2.5:1, gf:buffs.gravgun>0?1:0});
       if(buffs.vamp>0){ P.hp=Math.min(P.maxHp, P.hp+Math.max(1,Math.round(d*0.3))); }
       break;
     }
@@ -1318,6 +1364,7 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
       if(buffs.star>0) popup(hx,hy-10,'BLOCKED','#ffe14d',13);
       else{
         damagePlayer(d, {dx,dy,mul:buffs.mega>0?2.5:1}, opts.fromBall?'ball':'self', opts.fromBall? opts.ballOwner : MP.you);
+        if(buffs.gravgun>0 && P.deadT<=0){ P.gravFlipT=3; popup(hx,hy-34,'GRAVITY FLIPPED!','#9ddcff',13); }
         popup(hx,hy-22,'SELF BOUNCE!','#ff4d6d',12);
       }
       break;
@@ -1588,6 +1635,10 @@ function applyPowerup(i){
     case 'mega': buffs.mega=p.dur; break;
     case 'wind': buffs.wind=p.dur; break;
     case 'orbit': buffs.orbit=p.dur; orbitA=0; orbitFT=0.3; break;
+    case 'gravgun': buffs.gravgun=p.dur; break;
+    case 'hole': heldItem='hole'; break;
+    case 'freeze': doFreeze(); break;
+    case 'hack': doHack(); break;
     case 'swap': {
       const alive=[]; if(MP.on) for(let k=0;k<4;k++) if(k!==MP.you && peers[k].on && peers[k].hp>0) alive.push(k);
       sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
@@ -1633,13 +1684,88 @@ function beatDrop(){
   }
 }
 function throwItem(){
-  if(heldItem!=='ball' || placing) return;
-  heldItem=null;
+  if(!heldItem || placing) return;
   const a=aimAngle(), cx=P.x+P.w/2, cy=P.y+P.h/2;
-  const b={x:cx,y:cy, vx:Math.cos(a)*700+P.vx*0.3, vy:Math.sin(a)*700+P.vy*0.3-120, age:0, sprayT:0, owner:MP.you};
-  balls.push(b);
-  net.send({t:'ball', who:MP.you, x:Math.round(cx), y:Math.round(cy), vx:Math.round(b.vx), vy:Math.round(b.vy)});
-  tone('sine',400,900,0.15,0.25);
+  if(heldItem==='ball'){
+    heldItem=null;
+    const b={x:cx,y:cy, vx:Math.cos(a)*700+P.vx*0.3, vy:Math.sin(a)*700+P.vy*0.3-120, age:0, sprayT:0, owner:MP.you};
+    balls.push(b);
+    net.send({t:'ball', who:MP.you, x:Math.round(cx), y:Math.round(cy), vx:Math.round(b.vx), vy:Math.round(b.vy)});
+    tone('sine',400,900,0.15,0.25);
+  } else if(heldItem==='hole'){
+    heldItem=null;
+    // deploy at the crosshair, up to 700px out
+    let hx=mouse.x+cam.x, hy=mouse.y+cam.y;
+    const d=Math.hypot(hx-cx,hy-cy);
+    if(d>700){ hx=cx+(hx-cx)/d*700; hy=cy+(hy-cy)/d*700; }
+    hx=clamp(hx,60,W-60); hy=clamp(hy,60,H-60);
+    holes.push({x:hx,y:hy,t:4,owner:MP.you,dmgT:0,eT:0});
+    net.send({t:'hole', who:MP.you, x:Math.round(hx), y:Math.round(hy)});
+    tone('sawtooth',180,35,0.7,0.4); sfxNoise(0.5,0.3,220);
+  }
+}
+function doFreeze(){
+  net.send({t:'freeze', who:MP.you});
+  if(MP.isHost || !MP.on) botFreezeT=4;
+  sparks(P.x+P.w/2,P.y+P.h/2,'#9ffcef',14,240);
+  tone('triangle',1600,300,0.5,0.3);
+}
+function doHack(){
+  const anyPeers = MP.on && peers.some((p,i)=>i!==MP.you && p.on && p.hp>0);
+  if(anyPeers){
+    net.send({t:'hack', who:MP.you});
+    popup(P.x+P.w/2,P.y-24,'UPLOADED :)','#00ff46',15);
+  } else {
+    // solo: the hacker fries every bot instead — and gives YOU a taste of the glitch
+    for(let i=0;i<enemies.length;i++){
+      const en=enemies[i]; if(en.dead) continue;
+      const ex=en.x, ey=en.type==='prism'?en.y:en.y-en.h/2;
+      if(MP.isHost||!MP.on) damageEnemy(en,25,en.type==='prism'?en.minB:0,ex,ey);
+    }
+    hackT=1.0;
+  }
+  tone('sawtooth',65,40,1.1,0.4); sfxNoise(0.7,0.3,320); tone('square',220,45,0.9,0.18);
+}
+function updateHoles(dt){
+  for(let i=holes.length-1;i>=0;i--){
+    const h=holes[i];
+    h.t-=dt; h.dmgT-=dt; h.eT-=dt;
+    if(h.t<=0){ explosion(h.x,h.y,'#b44bff'); shake+=5; holes.splice(i,1); continue; }
+    // drag the local player toward the void
+    if(P.deadT<=0 && P.frozenT<=0){
+      const dx=h.x-(P.x+P.w/2), dy=h.y-(P.y+P.h/2), d=Math.hypot(dx,dy);
+      if(d<420 && d>1){
+        const f=1100*(1-d/420)*dt;
+        P.vx+=dx/d*f; P.vy+=dy/d*f;
+        P.holePullT=0.15; // the void overrides ground friction
+        if(d<55 && h.dmgT<=0){ h.dmgT=0.3; damagePlayer(6,0,'ball',h.owner); }
+      }
+    }
+    // orbs and disco balls spiral in too
+    for(const o of orbs){ const dx=h.x-o.x, dy=h.y-o.y, d=Math.hypot(dx,dy);
+      if(d<420&&d>1){ const f=900*(1-d/420)*dt; o.vx+=dx/d*f; o.vy+=dy/d*f; } }
+    for(const b of balls){ const dx=h.x-b.x, dy=h.y-b.y, d=Math.hypot(dx,dy);
+      if(d<420&&d>1&&b.age<0.9){ const f=900*(1-d/420)*dt; b.vx+=dx/d*f; b.vy+=dy/d*f; } }
+    // core damage to enemies: owner's sim decides (same authority as lasers)
+    if(h.eT<=0 && (h.owner===MP.you || !MP.on)){
+      h.eT=0.35;
+      for(let ei=0;ei<enemies.length;ei++){
+        const en=enemies[ei]; if(en.dead) continue;
+        const ex=en.x, ey=en.type==='prism'?en.y:en.y-en.h/2;
+        if(Math.hypot(ex-h.x,ey-h.y)<95){
+          if(MP.isHost||!MP.on) damageEnemy(en,8,en.type==='prism'?en.minB:0,ex,ey);
+          else net.send({t:'edmg', who:MP.you, i:ei, d:8, b:0, hx:Math.round(ex), hy:Math.round(ey)});
+        }
+      }
+    }
+    // hungry visuals: particles streaming inward
+    if(Math.random()<0.5){
+      const a=rnd(TAU), r0=rnd(120,320);
+      particles.push({x:h.x+Math.cos(a)*r0, y:h.y+Math.sin(a)*r0,
+        vx:-Math.cos(a)*r0*1.6, vy:-Math.sin(a)*r0*1.6,
+        life:0.55, max:0.55, color:Math.random()<0.5?'#b44bff':'#7de8ff', size:rnd(1.5,3), grav:0});
+    }
+  }
 }
 function updateBalls(dt){
   for(let i=balls.length-1;i>=0;i--){
@@ -1755,9 +1881,16 @@ function updatePlayer(dt){
     }
     return;
   }
+  if(P.frozenT>0){ // FLASH FREEZE: statue mode (still a valid target)
+    P.frozenT-=dt;
+    P.vx=0; P.vy=0; P.chargeT=-1;
+    mouse.pressed=false;
+    P.invulnT-=dt; P.sinceHurt+=dt; P.gravFlipT-=dt;
+    return;
+  }
   P.facing = (mouse.x+cam.x > P.x+P.w/2)? 1 : -1;
   const move=(keys.KeyD?1:0)-(keys.KeyA?1:0);
-  const gravMul = (buffs.moon>0?0.45:1);
+  const gravMul = (buffs.moon>0?0.45:1) * (P.gravFlipT>0? -1:1); // gravity gun victims fall UP
   let maxSpd = (buffs.star>0? 510:415)*CLASSES[P.cls].spd;
   if(buffs.skate>0) maxSpd*=1.25;
 
@@ -1773,7 +1906,7 @@ function updatePlayer(dt){
     const dir=Math.sign(P.vx);
     const over = Math.abs(P.vx)>maxSpd+1; // carrying dash momentum
     if(move && !(over && move===dir)) P.vx += move*acc*dt;
-    else if(!move && P.grounded && !over){ const f=2800*dt; if(Math.abs(P.vx)<=f)P.vx=0; else P.vx-=Math.sign(P.vx)*f; }
+    else if(!move && P.grounded && !over && !(P.holePullT>0)){ const f=2800*dt; if(Math.abs(P.vx)<=f)P.vx=0; else P.vx-=Math.sign(P.vx)*f; }
     else if(!move && !P.grounded && !over) P.vx*=Math.pow(0.3,dt);
     if(over){
       // dash momentum bleeds toward run speed instead of hard-stopping;
@@ -1800,10 +1933,10 @@ function updatePlayer(dt){
       particles.push({x:P.x+P.w/2+rnd(-5,5),y:P.y+P.h,vx:rnd(-40,40),vy:rnd(120,260),life:0.3,max:0.3,color:Math.random()<0.5?'#ff9d2e':'#ffe14d',size:3,grav:0});
       P.vy=Math.min(P.vy+g*dt,1150);
     } else if((P.wallL||P.wallR)&&P.vy>0&&move!==0) P.vy=Math.min(P.vy+g*dt,240);
-    else P.vy=Math.min(P.vy+g*dt,1150);
+    else P.vy=clamp(P.vy+g*dt,-1150,1150);
   }
-  P.dashCd-=dt; P.coyote-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
-  P.contactCd-=dt; P.hazardCd-=dt; P.landLagT-=dt;
+  P.dashCd-=dt; P.coyote-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt; P.gravFlipT-=dt;
+  P.contactCd-=dt; P.hazardCd-=dt; P.landLagT-=dt; P.holePullT-=dt;
   if(P.mCharges<mirrorMax){ P.mRegenT+=dt; if(P.mRegenT>=MIRROR_REGEN){ P.mRegenT=0; P.mCharges++; } }
   else P.mRegenT=0;
   if(!(P.dashT>0 && !P.grounded)) P.jumpBuf-=dt; // air dash: hold the buffered jump until the dash ends
@@ -1987,6 +2120,7 @@ function nearestTarget(en){
   return best? {x:best.x,y:best.y,d:bd} : null;
 }
 function updateEnemiesHost(dt){
+  if(botFreezeT>0){ botFreezeT-=dt; return; } // FLASH FREEZE stops the robots cold
   for(const en of enemies){
     if(en.dead){ if(mission) continue; // missions: kills are permanent
       en.respawnT-=dt; if(en.respawnT<=0){ en.dead=false; en.hp=en.maxHp; en.x=en.sx; en.y=en.sy; } continue; }
@@ -2114,6 +2248,8 @@ function update(dt){
   updateOrbs(dt);
   updateLoot(dt);
   updateBalls(dt);
+  updateHoles(dt);
+  hackT-=dt;
   missionTick(dt);
   // DISCO BUDDY: orbiting turret that pot-shots the nearest target
   if(buffs.orbit>0 && P.deadT<=0){
@@ -2148,7 +2284,8 @@ function update(dt){
       net.send({t:'ps', who:MP.you, x:Math.round(P.x), y:Math.round(P.y), vx:Math.round(P.vx),
         f:P.facing, a:+aimAngle().toFixed(2), g:P.gun, hp:Math.round(P.deadT>0?0:P.hp),
         s:buffs.star>0?1:0, su:buffs.suit>0?1:0, hk:P.hook?[Math.round(P.hook.x),Math.round(P.hook.y)]:0,
-        dsh:P.dashT>0?1:0, gh:buffs.ghost>0?1:0, tn:buffs.tiny>0?1:0, cls:P.cls, col:myColor});
+        dsh:P.dashT>0?1:0, gh:buffs.ghost>0?1:0, tn:buffs.tiny>0?1:0,
+        gv:P.gravFlipT>0?1:0, fz:P.frozenT>0?1:0, cls:P.cls, col:myColor});
     }
     if(MP.isHost){
       esnapT-=dt;
@@ -2432,6 +2569,22 @@ function drawWorld(){
     ctx.restore();
   }
 
+  // black holes
+  for(const h of holes){
+    const k=Math.min(1,h.t/0.6); // shrink out at the end
+    ctx.save(); ctx.translate(h.x,h.y);
+    ctx.shadowColor='#b44bff'; ctx.shadowBlur=26;
+    ctx.fillStyle='#05010c';
+    ctx.beginPath(); ctx.arc(0,0,26*k,0,TAU); ctx.fill();
+    ctx.rotate(beatT*4);
+    for(let r=0;r<3;r++){
+      ctx.strokeStyle=`hsla(${270+r*25},95%,${55+r*10}%,${0.55*k})`;
+      ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(0,0,(38+r*16)*k, r*2.1, r*2.1+4.4); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // disco buddy turret
   if(buffs.orbit>0 && P.deadT<=0){
     const ox=P.x+P.w/2+Math.cos(orbitA)*70, oy=P.y+P.h/2+Math.sin(orbitA)*70;
@@ -2458,6 +2611,8 @@ function drawWorld(){
     const pc=peerCls(i);
     if(p.dsh) drawDashShell(p.x+pc.w/2, p.y+pc.h/2, pc.w, pc.h);
     const pcol = (p.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : peerColor(i);
+    const pFlip=!!p.gv;
+    if(pFlip){ const fy0=p.y+pc.h/2; ctx.save(); ctx.translate(0,fy0); ctx.scale(1,-1); ctx.translate(0,-fy0); }
     if(p.gh) ctx.globalAlpha=0.15; // smoke machine: barely there
     if(p.tn){
       const fx=p.x+pc.w*0.31, fy=p.y+pc.h*0.62; // their synced x/y is the shrunk box
@@ -2466,11 +2621,16 @@ function drawWorld(){
       ctx.restore();
       ctx.globalAlpha=1;
       ctx.fillStyle=pcol; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center';
-      ctx.fillText('P'+(i+1), p.x+pc.w*0.31, p.y-8);
+      ctx.fillText(nameOf(i), p.x+pc.w*0.31, p.y-8);
     } else {
-      drawDancer(p.x, p.y, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, 'P'+(i+1), p.cls||0);
+      drawDancer(p.x, p.y, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, nameOf(i), p.cls||0);
     }
+    if(pFlip) ctx.restore();
     ctx.globalAlpha=1;
+    if(p.fz){ // iced
+      ctx.fillStyle='rgba(160,235,255,0.35)'; ctx.strokeStyle='rgba(200,245,255,0.8)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.roundRect(p.x-5,p.y-5,pc.w+10,pc.h+10,6); ctx.fill(); ctx.stroke();
+    }
     if(p.suit>0){
       ctx.strokeStyle='rgba(232,247,255,0.8)'; ctx.lineWidth=2; ctx.setLineDash([4,4]); ctx.lineDashOffset=-beatT*20;
       ctx.strokeRect(p.x-4,p.y-4,pc.w+8,pc.h+8); ctx.setLineDash([]);
@@ -2514,6 +2674,8 @@ function drawWorld(){
 
   if(P.deadT<=0){
     if(P.dashT>0) drawDashShell(P.x+P.w/2, P.y+P.h/2, P.w, P.h);
+    const meFlip=P.gravFlipT>0;
+    if(meFlip){ const fy0=P.y+P.h/2; ctx.save(); ctx.translate(0,fy0); ctx.scale(1,-1); ctx.translate(0,-fy0); }
     if(P.invulnT>0 && Math.floor(beatT*14)%2===0) ctx.globalAlpha=0.35;
     if(buffs.ghost>0) ctx.globalAlpha*=0.5; // you can still see yourself, faintly
     const lcol = (P.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : myCol();
@@ -2524,9 +2686,14 @@ function drawWorld(){
       drawDancer(fx-C0.w/2, fy-C0.h, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, null, P.cls);
       ctx.restore();
     } else {
-      drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?'YOU':null, P.cls);
+      drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?(myName||'YOU'):null, P.cls);
     }
+    if(meFlip) ctx.restore();
     ctx.globalAlpha=1;
+    if(P.frozenT>0){
+      ctx.fillStyle='rgba(160,235,255,0.35)'; ctx.strokeStyle='rgba(200,245,255,0.8)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.roundRect(P.x-5,P.y-5,P.w+10,P.h+10,6); ctx.fill(); ctx.stroke();
+    }
     if(buffs.suit>0){
       ctx.strokeStyle='rgba(232,247,255,0.85)'; ctx.lineWidth=2; ctx.setLineDash([4,4]); ctx.lineDashOffset=-beatT*20;
       ctx.strokeRect(P.x-4,P.y-4,P.w+8,P.h+8); ctx.setLineDash([]);
@@ -2739,18 +2906,26 @@ function drawHUD(){
       ctx.fillText(P.ammo+'/'+g.mag, x+223, y+44);
     }
   }
-  if(heldItem==='ball'){
+  if(heldItem){
     ctx.save(); ctx.translate(VW/2, VH-46);
     ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.roundRect(-86,-24,172,48,9); ctx.fill();
-    ctx.strokeStyle=`hsl(${beatT*200%360},100%,70%)`; ctx.lineWidth=2+pulse*2; ctx.stroke();
+    ctx.strokeStyle= heldItem==='hole'? '#b44bff' : `hsl(${beatT*200%360},100%,70%)`;
+    ctx.lineWidth=2+pulse*2; ctx.stroke();
     ctx.fillStyle='#fff'; ctx.font='bold 14px Segoe UI'; ctx.textAlign='center';
-    ctx.fillText('DISCO BALL', 12, -2);
+    ctx.fillText(heldItem==='hole'? 'BLACK HOLE':'DISCO BALL', 12, -2);
     ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.6)';
-    ctx.fillText('[F] THROW', 12, 15);
+    ctx.fillText(heldItem==='hole'? '[F] AT CROSSHAIR':'[F] THROW', 12, 15);
     ctx.translate(-58,0); ctx.rotate(beatT*2);
-    ctx.fillStyle='#cfd8ea'; ctx.beginPath(); ctx.arc(0,0,12,0,TAU); ctx.fill();
-    ctx.strokeStyle='rgba(60,70,110,0.8)'; ctx.lineWidth=1;
-    for(let k=-8;k<=8;k+=4){ ctx.beginPath(); ctx.moveTo(k,-12); ctx.lineTo(k,12); ctx.stroke(); }
+    if(heldItem==='hole'){
+      ctx.shadowColor='#b44bff'; ctx.shadowBlur=10;
+      ctx.fillStyle='#05010c'; ctx.beginPath(); ctx.arc(0,0,10,0,TAU); ctx.fill();
+      ctx.strokeStyle='#b44bff'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(0,0,14,0.5,4.2); ctx.stroke();
+    } else {
+      ctx.fillStyle='#cfd8ea'; ctx.beginPath(); ctx.arc(0,0,12,0,TAU); ctx.fill();
+      ctx.strokeStyle='rgba(60,70,110,0.8)'; ctx.lineWidth=1;
+      for(let k=-8;k<=8;k+=4){ ctx.beginPath(); ctx.moveTo(k,-12); ctx.lineTo(k,12); ctx.stroke(); }
+    }
     ctx.restore();
   }
   ctx.textAlign='right'; ctx.font='bold 15px Segoe UI';
@@ -2839,7 +3014,59 @@ function drawHUD(){
     ctx.fillText('back to the lobby in '+Math.ceil(matchEndT)+'…', VW/2, VH*0.7+46);
     drawCardFx();
   }
+  drawHack();
   drawCrosshair();
+}
+function drawHack(){
+  if(hackT<=0) return;
+  // M1RR0R_M4N.EXE — playful-creepy CRT takeover. Victims can still move, barely see.
+  const k=clamp(hackT/3,0,1);
+  ctx.fillStyle=`rgba(0,8,2,${0.62+0.14*Math.sin(beatT*40)})`;
+  ctx.fillRect(0,0,VW,VH);
+  for(let i=0;i<9;i++){ // signal tears
+    ctx.fillStyle=`rgba(0,255,70,${rnd(0.04,0.16)})`;
+    ctx.fillRect(rnd(-30,30), rnd(VH), VW, rnd(3,18));
+  }
+  for(let i=0;i<70;i++){ // static
+    ctx.fillStyle= Math.random()<0.8? 'rgba(0,255,70,0.25)':'rgba(255,255,255,0.3)';
+    ctx.fillRect(rnd(VW), rnd(VH), 2, 2);
+  }
+  // rgb-split banner
+  ctx.textAlign='center'; ctx.font='bold 30px Consolas, monospace';
+  ctx.fillStyle='rgba(255,0,60,0.8)'; ctx.fillText('SIGNAL LOST', VW/2-3, VH*0.16);
+  ctx.fillStyle='rgba(0,120,255,0.8)'; ctx.fillText('SIGNAL LOST', VW/2+3, VH*0.16);
+  ctx.fillStyle='#dfffe8'; ctx.fillText('SIGNAL LOST', VW/2, VH*0.16);
+  // the face (jittering phosphor)
+  const jx=rnd(-5,5), jy=rnd(-4,4), fx=VW/2+jx, fy=VH*0.42+jy;
+  ctx.save();
+  ctx.strokeStyle='#00ff46'; ctx.shadowColor='#00ff46'; ctx.shadowBlur=18; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(fx,fy,86,0,TAU); ctx.stroke();
+  for(const s of [-1,1]){ // hollow eyes with wandering pupils
+    ctx.beginPath(); ctx.arc(fx+s*34,fy-22,17,0,TAU); ctx.stroke();
+    ctx.fillStyle='#00ff46';
+    ctx.fillRect(fx+s*34+rnd(-7,7)-2, fy-22+rnd(-7,7)-2, 4,4);
+  }
+  ctx.beginPath(); // jagged grin
+  ctx.moveTo(fx-52,fy+30);
+  for(let i2=1;i2<=8;i2++) ctx.lineTo(fx-52+i2*13, fy+30+((i2%2)?14:0)+rnd(-2,2));
+  ctx.stroke();
+  ctx.restore();
+  // terminal typing
+  const lines=['> M1RR0R_M4N.EXE RUNNING','> I SEE YOU, '+(myName||'P'+(MP.you+1)),'> YOUR MIRRORS BELONG TO ME','> KEEP DANCING. I AM WATCHING.'];
+  const chars=Math.floor((3-hackT)*38);
+  ctx.textAlign='left'; ctx.font='bold 15px Consolas, monospace';
+  let used=0;
+  for(let li=0; li<lines.length; li++){
+    const take=clamp(chars-used,0,lines[li].length);
+    if(take>0){
+      ctx.fillStyle='rgba(0,255,70,0.9)';
+      ctx.fillText(lines[li].slice(0,take)+(take<lines[li].length && Math.floor(beatT*6)%2? '█':''), VW/2-190, VH*0.62+li*24);
+    }
+    used+=lines[li].length;
+  }
+  // scanlines
+  ctx.fillStyle='rgba(0,0,0,0.22)';
+  for(let y2=0;y2<VH;y2+=4) ctx.fillRect(0,y2,VW,1);
 }
 function drawHelp(){
   const lines=[
@@ -2991,31 +3218,30 @@ function drawLocker(){
   }
 }
 function drawVolumePanel(){
+  // compact mixer, bottom-right, present on every setup screen
   menuSliders=[];
-  if(VW<1000) return;
-  const x=VW-300, y=VH*0.34, w=250;
-  ctx.textAlign='left'; ctx.font='bold 13px Segoe UI'; ctx.fillStyle='#00ffd9';
-  ctx.fillText('VOLUME', x, y-10);
+  if(VW<640) return;
+  const w=190, x=VW-w-30, y=VH-136;
   ctx.fillStyle='rgba(10,6,30,0.8)';
-  ctx.beginPath(); ctx.roundRect(x-14,y,w+28,132,10); ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(x-12,y-24,w+24,124,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.textAlign='left'; ctx.font='bold 11px Segoe UI'; ctx.fillStyle='#00ffd9';
+  ctx.fillText('♫ VOLUME', x, y-8);
   const rows=[['master','MASTER'],['music','MUSIC'],['sfx','SFX']];
   rows.forEach((r,i)=>{
-    const sy=y+30+i*38;
-    ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='left';
-    ctx.fillText(r[1], x, sy-8);
+    const sy=y+16+i*28;
+    ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='bold 9px Segoe UI'; ctx.textAlign='left';
+    ctx.fillText(r[1], x, sy-5);
     ctx.textAlign='right';
-    ctx.fillText(Math.round(vol[r[0]]*100)+'%', x+w, sy-8);
-    menuSliders.push({x, y:sy, w, h:8, key:r[0]});
+    ctx.fillText(Math.round(vol[r[0]]*100)+'%', x+w, sy-5);
+    menuSliders.push({x, y:sy, w, h:7, key:r[0]});
     ctx.fillStyle='rgba(255,255,255,0.15)';
-    ctx.beginPath(); ctx.roundRect(x,sy,w,8,4); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(x,sy,w,7,3); ctx.fill();
     ctx.fillStyle= volDrag===r[0]? '#00ffd9':'#7de8ff';
-    ctx.beginPath(); ctx.roundRect(x,sy,w*clamp(vol[r[0]],0,1),8,4); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(x,sy,w*clamp(vol[r[0]],0,1),7,3); ctx.fill();
     ctx.fillStyle='#fff';
-    ctx.beginPath(); ctx.arc(x+w*clamp(vol[r[0]],0,1),sy+4,7,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+w*clamp(vol[r[0]],0,1),sy+3.5,6,0,TAU); ctx.fill();
   });
-  ctx.textAlign='left'; ctx.font='10px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.35)';
-  ctx.fillText('in game: - / = master volume · M mute', x, y+124);
 }
 
 // ---------- character select (shared by the solo select screen + lobby) ----------
@@ -3025,8 +3251,12 @@ function setMyPick(cls,col){
   myClass=clamp(cls|0,0,CLASSES.length-1); myColor=clamp(col|0,0,COLORS.length-1);
   try{ localStorage.setItem('lr4_class',myClass); localStorage.setItem('lr4_color',myColor); }catch(e){}
   if(changed) sfxUI(680);
-  lobbyPicks[MP.you]={cls:myClass,col:myColor};
-  if(state==='lobby') net.raw({t:'pick', who:MP.you, cls:myClass, col:myColor});
+  if(changed && myReady){ myReady=false; net.raw({t:'ready', who:MP.you, r:0}); } // changing your pick un-readies you
+  sendPickNow();
+}
+function sendPickNow(){
+  lobbyPicks[MP.you]={cls:myClass,col:myColor,name:myName};
+  if(state==='lobby'||MP.on) net.raw({t:'pick', who:MP.you, cls:myClass, col:myColor, name:myName});
 }
 // idle groove + a personality action every ~5s (staggered per card)
 function charPose(C,seed){
@@ -3190,6 +3420,7 @@ function drawSelect(){
   ctx.fillStyle=`hsl(${beatT*220%360},100%,65%)`; ctx.fillText('PICK YOUR DANCER', VW/2, VH*0.12);
   const cw=clamp((VW-160)/4-14,140,215), ch=Math.min(VH*0.52, cw*1.5);
   const topY=VH*0.17;
+  drawNameBox(26, VH*0.12-16);
   drawClassRow(VW/2, topY, cw, ch, false);
   drawSwatchRow(VW/2, topY+ch+32);
   const bw=170, bh=44, byy=Math.min(VH-64, topY+ch+62);
@@ -3201,6 +3432,7 @@ function drawSelect(){
   drawBigBtn(items,'rgba(30,20,70,0.95)','#7de8ff');
   drawBigBtn(go,'rgba(20,60,30,0.95)','#7dff5e');
   drawCardFx();
+  drawVolumePanel();
   drawCursorDot();
 }
 function drawItems(){
@@ -3251,6 +3483,7 @@ function drawItems(){
   const back={x:VW/2+90,y:byy,w:200,h:38,label:'◀ DONE [ESC]',action:()=>{ state=itemsReturn; }};
   menuBtns.push(back);
   drawBigBtn(back,'rgba(60,10,30,0.9)','#ff4d6d');
+  drawVolumePanel();
   drawCursorDot();
 }
 function drawMissions(){
@@ -3286,6 +3519,7 @@ function drawMissions(){
   const back={x:VW/2-110,y:y+14,w:220,h:38,label:'◀ BACK [ESC]',action:()=>{ state='menu'; }};
   menuBtns.push(back);
   drawBigBtn(back,'rgba(60,10,30,0.9)','#ff4d6d');
+  drawVolumePanel();
   drawCursorDot();
 }
 function drawBrowse(){
@@ -3358,6 +3592,7 @@ function drawBrowse(){
     ctx.fillStyle='#ff9d2e'; ctx.font='13px Segoe UI'; ctx.textAlign='center';
     ctx.fillText(menuNotice, VW/2, y+196);
   }
+  drawVolumePanel();
   drawCursorDot();
 }
 function drawLobby(){
@@ -3389,10 +3624,17 @@ function drawLobby(){
     ctx.textAlign='center';
     ctx.fillStyle= filled? col:'rgba(255,255,255,0.3)';
     ctx.font='bold 13px Segoe UI';
-    ctx.fillText(filled? 'P'+(i+1)+(i===MP.you?' (YOU)':i===0?' (HOST)':'') : 'OPEN', x+sw/2, y0+sh-18);
+    ctx.fillText(filled? nameOf(i)+(i===MP.you?' (YOU)':'') : 'OPEN', x+sw/2, y0+sh-18);
     ctx.font='9px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.5)';
-    ctx.fillText(filled? (pk? CLASSES[pk.cls||0].name:'picking…'):'waiting…', x+sw/2, y0+sh-6);
+    ctx.fillText(filled? (pk? CLASSES[pk.cls||0].name:'picking…')+(i===0?' · HOST':'') : 'waiting…', x+sw/2, y0+sh-6);
+    if(filled && i!==0){ // lock-in badge
+      const rdy=!!lobbyReady[i];
+      ctx.font='bold 10px Segoe UI';
+      ctx.fillStyle= rdy? '#7dff5e':'rgba(255,255,255,0.35)';
+      ctx.fillText(rdy? '✓ LOCKED IN':'not ready', x+sw/2, y0+12);
+    }
   }
+  drawNameBox(26, VH*0.06);
   // live character pick (synced to everyone in the lobby)
   const cw=clamp((VW-200)/4-14,110,150), ch=Math.min(VH*0.32,cw*1.45);
   const rowY=y0+sh+24;
@@ -3402,10 +3644,13 @@ function drawLobby(){
     ctx.textAlign='center'; ctx.font='bold 12px Segoe UI'; ctx.fillStyle='#7dff5e';
     ctx.fillText('ROUND UPGRADES: '+upgLine(), VW/2, rowY+ch+44);
   }
-  const canStart = MP.isHost && li.players.length>=2;
+  const others=li.players.filter(i2=>i2!==0);
+  const allLocked = others.length>0 && others.every(i2=>lobbyReady[i2]);
+  const canStart = MP.isHost && li.players.length>=2 && allLocked;
   const byy=Math.min(VH-56, rowY+ch+44);
   if(MP.isHost){
-    const b={x:VW/2-236,y:byy,w:230,h:42,label: canStart?'START THE APOCALYPSE':'NEED 2+ DANCERS',
+    const b={x:VW/2-236,y:byy,w:230,h:42,
+      label: li.players.length<2? 'NEED 2+ DANCERS' : allLocked? 'START THE APOCALYPSE':'WAITING FOR LOCK-INS',
       action:()=>{ if(canStart) net.raw({t:'begin'}); }};
     const it={x:VW/2+2,y:byy,w:110,h:42,label:'ITEMS',action:()=>{ itemsReturn='lobby'; state='items'; }};
     const c={x:VW/2+120,y:byy,w:110,h:42,label:'CANCEL',action:()=>leaveToMenu('')};
@@ -3414,14 +3659,35 @@ function drawLobby(){
     drawBigBtn(it,'rgba(30,20,70,0.95)','#7de8ff');
     drawBigBtn(c,'rgba(60,10,30,0.9)','#ff4d6d');
   } else {
-    ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='13px Segoe UI'; ctx.textAlign='center';
-    if(Math.floor(beatT*2)%2===0) ctx.fillText('waiting for the host to start…', VW/2, byy-8);
-    const c={x:VW/2-60,y:byy,w:120,h:38,label:'CANCEL [ESC]',action:()=>leaveToMenu('')};
-    menuBtns.push(c);
+    const r={x:VW/2-170,y:byy,w:200,h:42,label: myReady? '✓ LOCKED IN — CHANGE?':'LOCK IN ▶',
+      action:()=>{ myReady=!myReady; net.raw({t:'ready',who:MP.you,r:myReady?1:0}); lobbyReady[MP.you]=myReady; sfxUI(myReady?820:420); }};
+    const c={x:VW/2+46,y:byy,w:120,h:42,label:'CANCEL',action:()=>leaveToMenu('')};
+    menuBtns.push(r,c);
+    drawBigBtn(r, myReady? 'rgba(20,60,30,0.95)':'rgba(30,20,70,0.95)', myReady? '#7dff5e':'#ffe14d');
     drawBigBtn(c,'rgba(60,10,30,0.9)','#ff4d6d');
   }
   drawCardFx();
+  drawVolumePanel();
   drawCursorDot();
+}
+function drawNameBox(x,y){
+  const w=210,h=34;
+  menuBtns.push({x,y,w,h,action:()=>{ nameEdit=true; sfxUI(700); }});
+  const hov=mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
+  ctx.fillStyle= nameEdit? 'rgba(24,18,58,0.95)' : hov? 'rgba(18,12,44,0.9)':'rgba(10,6,30,0.8)';
+  ctx.beginPath(); ctx.roundRect(x,y,w,h,7); ctx.fill();
+  ctx.strokeStyle= nameEdit? myCol() : 'rgba(255,255,255,0.25)';
+  ctx.lineWidth= nameEdit? 2.2:1.4; ctx.stroke();
+  ctx.textAlign='left'; ctx.font='bold 10px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.45)';
+  ctx.fillText('NAME', x+10, y+13);
+  ctx.font='bold 14px Segoe UI';
+  ctx.fillStyle= myName? myCol() : 'rgba(255,255,255,0.35)';
+  const shown = myName || (nameEdit? '' : 'click to set…');
+  ctx.fillText(shown + (nameEdit && Math.floor(beatT*3)%2? '█':''), x+10, y+28);
+  if(nameEdit){
+    ctx.font='9px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.fillText('ENTER to save', x+w-72, y+13);
+  }
 }
 function drawCursorDot(){
   ctx.fillStyle='#00ffd9'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,4,0,TAU); ctx.fill();
@@ -3472,6 +3738,9 @@ window.LR4 = {
   mission(i){ startMission(i); },
   missionState:()=>mission? {id:mission.def.id, t:+mission.t.toFixed(1), over:missionOver, enemies:enemies.filter(e=>!e.dead).length, orbs:orbs.length} : null,
   safeTo(x,y){ safePlace(x,y); },
+  hackTest(sec){ hackT=sec||3; },
+  setName(n){ myName=(n||'').toUpperCase().slice(0,10); try{localStorage.setItem('lr4_name',myName);}catch(e){} sendPickNow(); },
+  holes:()=>holes.map(h=>({x:Math.round(h.x),y:Math.round(h.y),t:+h.t.toFixed(1)})),
   setItems(offIds){ itemsOn={}; for(const id of (offIds||[])) itemsOn[id]=false; saveItems(false); },
   itemsOff:()=>itemsOffList(),
   spawnOrb(x,y,vx,vy){ orbs.push({x,y,vx,vy,life:6}); },
