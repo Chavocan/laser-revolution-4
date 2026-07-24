@@ -156,6 +156,10 @@ if the files are missing. Test from the console: `LR4.music()` / `LR4.overlay('c
 ## Rules of the party
 
 - Bounce = power; your own bounced beams hit you for 50% + knockback (laser-jumping tech).
+- **Dashing grants i-frames** — time it to phase through lasers ("DODGED!"). Death pits
+  don't care about your dash.
+- **FACE-OFF is pure PvP** — no bots or prisms, just dancers (1v1 up to 4-player FFA).
+  Objective modes with NPCs are future work; CO-OP keeps the full bot roster.
 - Taking damage refunds your air jump + dash; dashing refunds your jump. Stay airborne.
 - VS scoring: kill = +1 frag to the killer; any self-inflicted or hazard death = **−1**.
 - Prisms only take bounced shots · grates pass lasers · red zones are hazards.

@@ -48,6 +48,7 @@ let volDrag = null, menuSliders = [];
 let codeInput = '', browsePollT = 0;
 let escT = 0; // double-ESC quit confirmation window
 let rmbGhost = false; // hold-RMB quick mirror placement
+let hurtVigT = 0; // red screen vignette after taking a hit
 
 // ---------- utils ----------
 const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
@@ -284,12 +285,12 @@ const P = {
   grounded:false, wallL:false, wallR:false, onOneWay:false,
   coyote:0, jumpBuf:0, airJumps:1, dropT:0,
   dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true,
-  hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0,
+  hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0, hurtT:0,
   gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0, ammo:12, reloadT:0,
   facing:1, hook:null, spawn:{x:140,y:1334},
 };
 const PCOLS = ['#00ffd9','#ff9d2e','#7dff5e','#ff4dd2'];
-function newPeer(){ return {on:false,x:0,y:0,tx:0,ty:0,vx:0,facing:1,aim:0,gun:0,hp:100,star:0,suit:0,hook:0,gunFlash:0,cls:0,col:null}; }
+function newPeer(){ return {on:false,x:0,y:0,tx:0,ty:0,vx:0,facing:1,aim:0,gun:0,hp:100,star:0,suit:0,hook:0,gunFlash:0,cls:0,col:null,hurtT:0}; }
 const peers = [newPeer(),newPeer(),newPeer(),newPeer()];
 function peerCls(i){ return CLASSES[peers[i].cls||0]; }
 function peerColor(i){ return peers[i].col!=null? COLORS[peers[i].col] : PCOLS[i]; }
@@ -406,6 +407,7 @@ function onNet(m){
     case 'ps': {
       const p=peers[m.who]; if(!p) break;
       if(!p.on){ p.x=m.x; p.y=m.y; }
+      if(p.on && m.hp<p.hp) p.hurtT=0.3; // peer just took a hit — strobe them
       p.on=true; p.tx=m.x; p.ty=m.y; p.vx=m.vx||0;
       p.facing=m.f||1; p.aim=m.a||0; p.gun=m.g||0;
       p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0;
@@ -441,6 +443,7 @@ function onNet(m){
 }
 function initWorld(mode, stage){
   loadStage(mode==='vs'? (stage||0) : 0);
+  if(mode==='vs') enemies=[]; // FACE-OFF is pure PvP — no bots, no prisms, just dancers
   playerMirrors=[]; mirrorIdSeq=0; mirrorMax=MIRROR_BASE;
   orbs=[]; beams=[]; particles=[]; popups=[]; balls=[]; decoys=[];
   score=0; kills=0; bestBounce=0; MP.frags=[0,0,0,0]; lastAttacker=-1;
@@ -1393,7 +1396,7 @@ function updatePlayer(dt){
     } else if((P.wallL||P.wallR)&&P.vy>0&&move!==0) P.vy=Math.min(P.vy+g*dt,240);
     else P.vy=Math.min(P.vy+g*dt,1150);
   }
-  P.dashCd-=dt; P.coyote-=dt; P.jumpBuf-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt;
+  P.dashCd-=dt; P.coyote-=dt; P.jumpBuf-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
 
   if(P.jumpBuf>0){
     if(P.grounded||P.coyote>0){ P.vy=-680; P.grounded=false; P.coyote=0; P.jumpBuf=0; P.hook=null; }
@@ -1497,8 +1500,11 @@ function hitKnock(dx,dy,dmg){
 function damagePlayer(d,knock,cause,by){
   if(P.deadT>0) return;
   if(buffs.star>0 && d<999) return;
+  if(P.dashT>0 && d<999){ popup(P.x+P.w/2,P.y-16,'DODGED!','#00ffd9',13); return; } // dash i-frames
   if(P.invulnT>0 && cause!=='self' && cause!=='ball' && cause!=='hazard') return;
   P.hp-=d; P.sinceHurt=0; shake+=6; sfxHurt();
+  P.hurtT=0.3; hurtVigT=0.35;
+  sparks(P.x+P.w/2,P.y+P.h/2,'#ff4d6d',10,220);
   if(by!=null && by>=0) lastAttacker=by;
   if(cause!=='self'&&cause!=='ball') P.invulnT=1;
   P.airJumps=1; P.canAirDash=true;
@@ -1646,7 +1652,7 @@ function update(dt){
   }
   if(state!=='play'||paused) return;
   matchT+=dt;
-  helpT-=dt; announceT-=dt; escT-=dt; shake=Math.max(0,shake-dt*22);
+  helpT-=dt; announceT-=dt; escT-=dt; hurtVigT-=dt; shake=Math.max(0,shake-dt*22);
 
   updatePlayer(dt);
   if(MP.isHost || !MP.on) updateEnemiesHost(dt);
@@ -1662,7 +1668,7 @@ function update(dt){
     if(!p.on) continue;
     p.x=lerp(p.x,p.tx,1-Math.pow(0.000005,dt));
     p.y=lerp(p.y,p.ty,1-Math.pow(0.000005,dt));
-    p.gunFlash-=dt;
+    p.gunFlash-=dt; p.hurtT-=dt;
   }
   if(MP.on){
     psT-=dt;
@@ -1958,7 +1964,8 @@ function drawWorld(){
     const p=peers[i];
     if(i===MP.you || !p.on || p.hp<=0) continue;
     const pc=peerCls(i);
-    drawDancer(p.x, p.y, p.facing, p.aim, p.gun, peerColor(i), p.star>0||p.suit>0, p.gunFlash>0, p.vx, 'P'+(i+1), p.cls||0);
+    const pcol = (p.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : peerColor(i);
+    drawDancer(p.x, p.y, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, 'P'+(i+1), p.cls||0);
     if(p.suit>0){
       ctx.strokeStyle='rgba(232,247,255,0.8)'; ctx.lineWidth=2; ctx.setLineDash([4,4]); ctx.lineDashOffset=-beatT*20;
       ctx.strokeRect(p.x-4,p.y-4,pc.w+8,pc.h+8); ctx.setLineDash([]);
@@ -2002,7 +2009,8 @@ function drawWorld(){
 
   if(P.deadT<=0){
     if(P.invulnT>0 && Math.floor(beatT*14)%2===0) ctx.globalAlpha=0.35;
-    drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, myCol(), buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?'YOU':null, P.cls);
+    const lcol = (P.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : myCol();
+    drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?'YOU':null, P.cls);
     ctx.globalAlpha=1;
     if(buffs.suit>0){
       ctx.strokeStyle='rgba(232,247,255,0.85)'; ctx.lineWidth=2; ctx.setLineDash([4,4]); ctx.lineDashOffset=-beatT*20;
@@ -2115,6 +2123,13 @@ function drawDancer(px,py,facing,aim,gunIdx,col,glow,flash,vx,tag,cls){
 }
 function drawHUD(){
   const pulse=beatPulse();
+  if(hurtVigT>0){
+    // red edge vignette: you just got hit
+    const a=clamp(hurtVigT/0.35,0,1)*0.45;
+    const vg=ctx.createRadialGradient(VW/2,VH/2,Math.min(VW,VH)*0.35,VW/2,VH/2,Math.max(VW,VH)*0.72);
+    vg.addColorStop(0,'rgba(255,40,80,0)'); vg.addColorStop(1,`rgba(255,40,80,${a})`);
+    ctx.fillStyle=vg; ctx.fillRect(0,0,VW,VH);
+  }
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(18,16,240,26,7); ctx.fill();
   ctx.fillStyle= P.hp>P.maxHp*0.5? '#7dff5e' : P.hp>P.maxHp*0.25? '#ffe14d':'#ff4d6d';
   ctx.beginPath(); ctx.roundRect(21,19,234*clamp(P.hp/P.maxHp,0,1),20,5); ctx.fill();
@@ -2314,7 +2329,7 @@ function drawMenu(){
   };
   addBtn('SOLO PARTY','pick your dancer, then go',()=>{ initAudio(); state='select'; });
   addBtn('HOST CO-OP','up to 4 dancers vs the bots',()=>hostRoom('coop'),net.ready);
-  addBtn('HOST FACE-OFF','2-4 players · first to 10 frags',()=>hostRoom('vs'),net.ready);
+  addBtn('HOST FACE-OFF','pure PvP · 1v1 up to 4 · first to 10',()=>hostRoom('vs'),net.ready);
   const stName = menuStageSel===0? 'RANDOM' : STAGES[menuStageSel-1].name;
   addBtn('STAGE: '+stName+'  ⟳','face-off arena · click to cycle',()=>{ menuStageSel=(menuStageSel+1)%(STAGES.length+1); sfxUI(600); });
   addBtn('JOIN A PARTY'+(roomListData.length? '  ('+roomListData.length+' open)':''),
