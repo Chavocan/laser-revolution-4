@@ -108,8 +108,8 @@ const STAGES = [
     {x:540,y:1240,w:150,h:14, oneWay:true},
     {x:780,y:1120,w:150,h:14, oneWay:true},
     {x:1020,y:1000,w:150,h:14, oneWay:true},
-    {x:1200,y:900,w:430,h:32},
-    {x:1650,y:640,w:400,h:30},
+    {x:1200,y:900,w:430,h:32, drop:true},
+    {x:1650,y:640,w:400,h:30, drop:true},
     {x:2080,y:1060,w:660,h:50},
     {x:2600,y:1200,w:36,h:180},
     {x:3060,y:720,w:44,h:520},
@@ -136,8 +136,8 @@ const STAGES = [
   solids:[
     {x:0,y:1380,w:W,h:140, floor:true},
     {x:1700,y:700,w:200,h:680},
-    {x:600,y:1050,w:300,h:30},{x:2700,y:1050,w:300,h:30},
-    {x:1100,y:800,w:240,h:30},{x:2260,y:800,w:240,h:30},
+    {x:600,y:1050,w:300,h:30, drop:true},{x:2700,y:1050,w:300,h:30, drop:true},
+    {x:1100,y:800,w:240,h:30, drop:true},{x:2260,y:800,w:240,h:30, drop:true},
     {x:1730,y:560,w:140,h:14, oneWay:true},
   ],
   mirrors:[
@@ -160,8 +160,8 @@ const STAGES = [
 {name:'NEON GAUNTLET', build(){ return {
   solids:[
     {x:0,y:1380,w:W,h:140, floor:true},
-    {x:400,y:1080,w:1200,h:30},{x:2000,y:1080,w:1200,h:30},
-    {x:900,y:780,w:1800,h:30},
+    {x:400,y:1080,w:1200,h:30, drop:true},{x:2000,y:1080,w:1200,h:30, drop:true},
+    {x:900,y:780,w:1800,h:30, drop:true},
     {x:700,y:930,w:150,h:14,oneWay:true},{x:2750,y:930,w:150,h:14,oneWay:true},
     {x:150,y:560,w:90,h:14,oneWay:true},{x:330,y:440,w:90,h:14,oneWay:true},{x:60,y:330,w:240,h:20},
   ],
@@ -183,10 +183,10 @@ const STAGES = [
 {name:'SKY SCAFFOLD', build(){ return {
   solids:[
     {x:200,y:1200,w:300,h:30},{x:3100,y:1200,w:300,h:30},
-    {x:800,y:1050,w:220,h:26},{x:1350,y:900,w:220,h:26},{x:1900,y:1000,w:220,h:26},{x:2450,y:880,w:220,h:26},
+    {x:800,y:1050,w:220,h:26, drop:true},{x:1350,y:900,w:220,h:26, drop:true},{x:1900,y:1000,w:220,h:26, drop:true},{x:2450,y:880,w:220,h:26, drop:true},
     {x:1200,y:600,w:180,h:14,oneWay:true},{x:1700,y:500,w:180,h:14,oneWay:true},{x:2200,y:600,w:180,h:14,oneWay:true},
-    {x:1720,y:340,w:160,h:20},
-    {x:540,y:720,w:90,h:16},{x:2980,y:700,w:90,h:16},
+    {x:1720,y:340,w:160,h:20, drop:true},
+    {x:540,y:720,w:90,h:16, drop:true},{x:2980,y:700,w:90,h:16, drop:true},
   ],
   mirrors:[
     {x:1100,y:1250,angle:0,len:200},{x:2600,y:1250,angle:0,len:200},
@@ -250,6 +250,12 @@ const POWERUPS = [
   {id:'beat',  name:'BEAT DROP!!',                        short:'BEAT DROP', color:'#ff4d6d', w:2},
   {id:'skate', name:'SPEED SKATES (10s)',                 short:'SKATES',    color:'#ffe14d', w:3, dur:10},
   {id:'decoy', name:'DECOY DANCER (12s)',                 short:'DECOY',     color:'#ff4dd2', w:2},
+  {id:'storm', name:'DISCO MONSOON — BALLS FROM THE SKY!!',short:'MONSOON',  color:'#ff9df5', w:2},
+  {id:'maze',  name:'INSTANT MIRROR MAZE',                short:'MIRROR MAZE',color:'#c9ffb8',w:2},
+  {id:'tiny',  name:'FUN-SIZE — 60% DANCER (10s)',        short:'FUN-SIZE',  color:'#9ffcef', w:2, dur:10},
+  {id:'rubber',name:'RUBBER RAVE — WALLS BOUNCE LASERS (8s)',short:'RUBBER RAVE',color:'#ffb3e6',w:2, dur:8},
+  {id:'ghost', name:'SMOKE MACHINE — NEARLY INVISIBLE (8s)',short:'SMOKE',   color:'#cfd8ea', w:2, dur:8},
+  {id:'swap',  name:'DJ SWITCHEROO!',                     short:'SWITCHEROO',color:'#ffe14d', w:2},
 ];
 function rollPowerup(){
   let tot=0; for(const p of POWERUPS) tot+=p.w;
@@ -257,7 +263,7 @@ function rollPowerup(){
   for(let i=0;i<POWERUPS.length;i++){ r-=POWERUPS[i].w; if(r<=0) return i; }
   return 0;
 }
-const buffs = {fever:0, amp:0, over:0, star:0, hook:0, jet:0, moon:0, blink:0, suit:0, skate:0};
+const buffs = {fever:0, amp:0, over:0, star:0, hook:0, jet:0, moon:0, blink:0, suit:0, skate:0, tiny:0, rubber:0, ghost:0};
 let mirrorMax = MIRROR_BASE;
 let heldItem = null;
 const roul = {active:false, t:0, pick:0, tickT:0};
@@ -297,7 +303,10 @@ function peerCls(i){ return CLASSES[peers[i].cls||0]; }
 function peerColor(i){ return peers[i].col!=null? COLORS[peers[i].col] : PCOLS[i]; }
 function peerMaxHp(i){ return peerCls(i).hp; }
 function peerCenter(i){ const C=peerCls(i); return {x:peers[i].x+C.w/2, y:peers[i].y+C.h/2}; }
-function peerRect(i){ const C=peerCls(i); return {x:peers[i].x, y:peers[i].y, w:C.w, h:C.h}; }
+function peerRect(i){
+  const C=peerCls(i), k=peers[i].tn? 0.62:1; // FUN-SIZE peers are genuinely harder to hit
+  return {x:peers[i].x, y:peers[i].y, w:C.w*k, h:C.h*k};
+}
 function selfRect(){ return {x:P.x,y:P.y,w:P.w,h:P.h}; }
 
 // ---------- game state ----------
@@ -411,7 +420,7 @@ function onNet(m){
       if(p.on && m.hp<p.hp) p.hurtT=0.3; // peer just took a hit — strobe them
       p.on=true; p.tx=m.x; p.ty=m.y; p.vx=m.vx||0;
       p.facing=m.f||1; p.aim=m.a||0; p.gun=m.g||0;
-      p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0; p.dsh=m.dsh||0;
+      p.hp=m.hp; p.star=m.s||0; p.suit=m.su||0; p.hook=m.hk||0; p.dsh=m.dsh||0; p.gh=m.gh||0; p.tn=m.tn||0;
       if(m.cls!=null) p.cls=m.cls;
       if(m.col!=null) p.col=m.col;
       break; }
@@ -436,6 +445,12 @@ function onNet(m){
         sparks(b.x,b.y,'#ff9df5',10,180); popup(b.x,b.y-24,'P'+(m.who+1)+' GRABBED LOOT','#ff9df5',13); }
       break;
     case 'lootUp': if(loot[m.i]) loot[m.i].active=true; break;
+    case 'swap':
+      if(m.to!==MP.you) break;
+      sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
+      P.x=m.x; P.y=m.y; P.vx=P.vy=0;
+      popup(P.x+P.w/2,P.y-20,'SWITCHED!','#ffe14d',15);
+      break;
     case 'sting':
       if(m.pi!=null && props[m.pi]) props[m.pi].cdT=2.5;
       sting(m.n, {x:m.x, y:m.y, fromNet:true});
@@ -962,7 +977,7 @@ function shoot(gun,angle,dmgMul){
   P.gunFlash=0.07;
   shake += gun.charge? 6 : (gun.pellets>3? 4 : 1.2);
   sfxShoot(gun);
-  net.send({t:'fire', who:MP.you, x:Math.round(P.x+P.w/2), y:Math.round(P.y+P.h/2), a:angle, g:P.gun, dm:mul, mb:gun.maxB});
+  net.send({t:'fire', who:MP.you, x:Math.round(P.x+P.w/2), y:Math.round(P.y+P.h/2), a:angle, g:P.gun, dm:mul, mb:gun.maxB, rb:buffs.rubber>0?1:0});
 }
 function remoteShoot(m){
   const g=GUNS[m.g]||GUNS[0];
@@ -970,7 +985,7 @@ function remoteShoot(m){
     let a=m.a;
     if(g.pellets>1) a += (i/(g.pellets-1)-0.5)*g.spread + rnd(-0.02,0.02);
     else a += rnd(-0.5,0.5)*g.spread;
-    fireBeam(m.x, m.y, a, g, m.dm||1, {isLocal:false, maxB:m.mb!=null?m.mb:g.maxB});
+    fireBeam(m.x, m.y, a, g, m.dm||1, {isLocal:false, maxB:m.mb!=null?m.mb:g.maxB, rubberSim:!!m.rb});
   }
   if(peers[m.who]) peers[m.who].gunFlash=0.07;
   sfxShoot(g);
@@ -1067,6 +1082,17 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
       if(pierced){ pierced.add(hit.enemy); x=hx+dx*0.6; y=hy+dy*0.6; skipM=null; if(range>0) continue; }
       break;
     }
+    if(hit.kind==='wall' && bounces<maxB && ((opts.isLocal && buffs.rubber>0) || opts.rubberSim)){
+      // RUBBER RAVE: walls act like mirrors (full bounce power)
+      bounces++; dmg*=gun.bMult;
+      if(!opts.quiet) sfxBounce(bounces);
+      sparks(hx,hy,'#ffb3e6',6,160);
+      const d=dx*hit.nx+dy*hit.ny;
+      dx-=2*d*hit.nx; dy-=2*d*hit.ny;
+      x=hx+dx*0.6; y=hy+dy*0.6; skipM=null;
+      if(range<=0) break;
+      continue;
+    }
     sparks(hx,hy,gun.color,5,140);
     break;
   }
@@ -1137,6 +1163,14 @@ function traceSight(){
       if(range<=0) break;
       continue;
     }
+    if(hit.kind==='wall' && bounces<g.maxB && buffs.rubber>0){
+      bounces++;
+      const d=dx*hit.nx+dy*hit.ny;
+      dx-=2*d*hit.nx; dy-=2*d*hit.ny;
+      x=hx+dx*0.6; y=hy+dy*0.6; skipM=null;
+      if(range<=0) break;
+      continue;
+    }
     endKind=hit.kind;
     break;
   }
@@ -1144,7 +1178,7 @@ function traceSight(){
 }
 
 // ---------- mirrors: placement (cap system, never spent) ----------
-function myMirrors(){ return playerMirrors.filter(m=>m.owner===MP.you); }
+function myMirrors(){ return playerMirrors.filter(m=>m.owner===MP.you && !m.temp); } // maze mirrors don't count toward the cap
 function ghostValid(mx,my){
   const m={x:mx,y:my,angle:ghostAngle,len:90};
   const e=segPts(m);
@@ -1222,8 +1256,26 @@ function updateLoot(dt){
     if(roul.tickT<=0){ roul.tickT=0.09; tone('sine',600+roul.t*900,700+roul.t*900,0.05,0.12); }
     if(roul.t>=0.9){ roul.active=false; applyPowerup(roul.pick); }
   }
+  const wasTiny=buffs.tiny>0;
   for(const k in buffs) if(buffs[k]>0) buffs[k]-=dt;
   if(buffs.hook<=0 && P.hook) P.hook=null;
+  if(wasTiny && buffs.tiny<=0){ // grow back (nudge up if the ceiling got closer)
+    const C=CLASSES[P.cls];
+    P.y-=(C.h-P.h); P.w=C.w; P.h=C.h;
+    for(let i=0;i<20;i++){
+      let stuck=false;
+      for(const s of solids){ if(!s.oneWay && !s.drop && rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},s)){ stuck=true; break; } }
+      if(!stuck) break;
+      P.y-=6;
+    }
+  }
+  // temporary maze mirrors expire (owner broadcasts the break)
+  for(const m of playerMirrors.slice()){
+    if(m.temp && m.owner===MP.you){
+      m.expT=(m.expT!=null?m.expT:12)-dt;
+      if(m.expT<=0) breakMirrorById(m.id, true);
+    }
+  }
   for(let i=decoys.length-1;i>=0;i--){ decoys[i].t-=dt; if(decoys[i].t<=0){ sparks(decoys[i].x,decoys[i].y,'#ff4dd2',8,140); decoys.splice(i,1);} }
 }
 function applyPowerup(i){
@@ -1245,6 +1297,45 @@ function applyPowerup(i){
     case 'skate': buffs.skate=p.dur; break;
     case 'ball': heldItem='ball'; break;
     case 'beat': beatDrop(); sting('horn'); break;
+    case 'storm': { // disco balls rain across the arena
+      for(let k=0;k<5;k++){
+        const bx=clamp(P.x+rnd(-800,800),120,W-120);
+        const b={x:bx,y:rnd(120,260),vx:rnd(-120,120),vy:0,age:0,sprayT:0,owner:MP.you};
+        balls.push(b);
+        net.send({t:'ball', who:MP.you, x:Math.round(b.x), y:Math.round(b.y), vx:Math.round(b.vx), vy:0});
+      }
+      sting('horn');
+      break; }
+    case 'maze': { // diamond of temporary mirrors around you (12s, no cap cost)
+      const cx2=P.x+P.w/2, cy2=P.y+P.h/2;
+      for(const [ox,oy,an] of [[130,-130,45],[130,130,-45],[-130,130,45],[-130,-130,-45]]){
+        const m={id:'m'+MP.you+'-'+(mirrorIdSeq++), x:cx2+ox, y:cy2+oy, angle:an, len:90,
+          player:true, owner:MP.you, hp:MIRROR_HP, temp:true, expT:12};
+        playerMirrors.push(m);
+        net.send({t:'mplace', m});
+      }
+      sfxPlace();
+      break; }
+    case 'tiny': {
+      if(buffs.tiny<=0){ const oh=P.h; P.w=Math.max(12,Math.round(P.w*0.6)); P.h=Math.max(22,Math.round(P.h*0.6)); P.y+=oh-P.h; }
+      buffs.tiny=p.dur;
+      break; }
+    case 'rubber': buffs.rubber=p.dur; break;
+    case 'ghost': buffs.ghost=p.dur; break;
+    case 'swap': {
+      const alive=[]; if(MP.on) for(let k=0;k<4;k++) if(k!==MP.you && peers[k].on && peers[k].hp>0) alive.push(k);
+      sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
+      if(alive.length){
+        const t=alive[Math.floor(Math.random()*alive.length)];
+        net.send({t:'swap', who:MP.you, to:t, x:Math.round(P.x), y:Math.round(P.y)});
+        P.x=peers[t].x; P.y=peers[t].y; P.vx=P.vy=0;
+      } else {
+        const sp=spawns[Math.floor(Math.random()*spawns.length)];
+        P.x=sp.x; P.y=sp.y-(P.h-46); P.vx=P.vy=0;
+      }
+      sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
+      popup(P.x+P.w/2,P.y-20,'SWITCHED!','#ffe14d',15);
+      break; }
     case 'decoy': {
       const d={x:P.x+P.w/2,y:P.y+P.h,who:MP.you,t:12,seed:rnd(10),cls:P.cls,col:myColor};
       decoys.push(d);
@@ -1436,7 +1527,7 @@ function updatePlayer(dt){
   P.x+=P.vx*dt;
   const box=()=>({x:P.x,y:P.y,w:P.w,h:P.h});
   for(const s of solids){
-    if(s.oneWay) continue;
+    if(s.oneWay||s.drop) continue; // semi-solids never block sideways movement
     if(rectsOverlap(box(),s)){
       if(P.vx>0) P.x=s.x-P.w; else if(P.vx<0) P.x=s.x+s.w;
       else P.x = (P.x+P.w/2 < s.x+s.w/2)? s.x-P.w : s.x+s.w;
@@ -1445,7 +1536,7 @@ function updatePlayer(dt){
   }
   P.wallL=P.wallR=false;
   for(const s of solids){
-    if(s.oneWay) continue;
+    if(s.oneWay||s.drop) continue;
     if(rectsOverlap({x:P.x-2,y:P.y+4,w:2,h:P.h-8},s)) P.wallL=true;
     if(rectsOverlap({x:P.x+P.w,y:P.y+4,w:2,h:P.h-8},s)) P.wallR=true;
   }
@@ -1455,7 +1546,7 @@ function updatePlayer(dt){
   P.grounded=false; P.onOneWay=false;
   for(const s of solids){
     if(!rectsOverlap(box(),s)) continue;
-    if(s.oneWay){
+    if(s.oneWay||s.drop){ // land from above only; S drops through
       if(P.vy>=0 && prevBottom<=s.y+1 && P.dropT<=0){ P.y=s.y-P.h; P.vy=0; P.grounded=true; P.onOneWay=true; }
     } else {
       if(P.vy>0){ P.y=s.y-P.h; P.vy=0; P.grounded=true; P.dashT=0; }
@@ -1706,7 +1797,7 @@ function update(dt){
       net.send({t:'ps', who:MP.you, x:Math.round(P.x), y:Math.round(P.y), vx:Math.round(P.vx),
         f:P.facing, a:+aimAngle().toFixed(2), g:P.gun, hp:Math.round(P.deadT>0?0:P.hp),
         s:buffs.star>0?1:0, su:buffs.suit>0?1:0, hk:P.hook?[Math.round(P.hook.x),Math.round(P.hook.y)]:0,
-        dsh:P.dashT>0?1:0, cls:P.cls, col:myColor});
+        dsh:P.dashT>0?1:0, gh:buffs.ghost>0?1:0, tn:buffs.tiny>0?1:0, cls:P.cls, col:myColor});
     }
     if(MP.isHost){
       esnapT-=dt;
@@ -1833,6 +1924,16 @@ function drawWorld(){
     ctx.fillRect(s.x,s.y,s.w,s.h);
     ctx.strokeStyle='rgba(120,80,255,0.35)'; ctx.lineWidth=2;
     ctx.strokeRect(s.x+1,s.y+1,s.w-2,s.h-2);
+    if(s.drop){
+      // droppable: dashed underside + down-chevrons (press S to fall through)
+      ctx.strokeStyle='rgba(0,255,217,0.45)'; ctx.lineWidth=1.5;
+      ctx.setLineDash([7,6]); ctx.lineDashOffset=-beatT*20;
+      ctx.beginPath(); ctx.moveTo(s.x+4,s.y+s.h-3); ctx.lineTo(s.x+s.w-4,s.y+s.h-3); ctx.stroke();
+      ctx.setLineDash([]);
+      for(let x=s.x+30;x<s.x+s.w-20;x+=80){
+        ctx.beginPath(); ctx.moveTo(x-4,s.y+s.h-9); ctx.lineTo(x,s.y+s.h-5); ctx.lineTo(x+4,s.y+s.h-9); ctx.stroke();
+      }
+    }
     if(s.floor){
       const beatCount=Math.floor(beatT*BPM/60);
       const hypeMul=1+Math.min(hypeT,2)*0.55; // stingers crank the dancefloor
@@ -1995,7 +2096,19 @@ function drawWorld(){
     const pc=peerCls(i);
     if(p.dsh) drawDashShell(p.x+pc.w/2, p.y+pc.h/2, pc.w, pc.h);
     const pcol = (p.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : peerColor(i);
-    drawDancer(p.x, p.y, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, 'P'+(i+1), p.cls||0);
+    if(p.gh) ctx.globalAlpha=0.15; // smoke machine: barely there
+    if(p.tn){
+      const fx=p.x+pc.w*0.31, fy=p.y+pc.h*0.62; // their synced x/y is the shrunk box
+      ctx.save(); ctx.translate(fx,fy); ctx.scale(0.62,0.62); ctx.translate(-fx,-fy);
+      drawDancer(fx-pc.w/2, fy-pc.h, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, null, p.cls||0);
+      ctx.restore();
+      ctx.globalAlpha=1;
+      ctx.fillStyle=pcol; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center';
+      ctx.fillText('P'+(i+1), p.x+pc.w*0.31, p.y-8);
+    } else {
+      drawDancer(p.x, p.y, p.facing, p.aim, p.gun, pcol, p.star>0||p.suit>0, p.gunFlash>0, p.vx, 'P'+(i+1), p.cls||0);
+    }
+    ctx.globalAlpha=1;
     if(p.suit>0){
       ctx.strokeStyle='rgba(232,247,255,0.8)'; ctx.lineWidth=2; ctx.setLineDash([4,4]); ctx.lineDashOffset=-beatT*20;
       ctx.strokeRect(p.x-4,p.y-4,pc.w+8,pc.h+8); ctx.setLineDash([]);
@@ -2040,8 +2153,17 @@ function drawWorld(){
   if(P.deadT<=0){
     if(P.dashT>0) drawDashShell(P.x+P.w/2, P.y+P.h/2, P.w, P.h);
     if(P.invulnT>0 && Math.floor(beatT*14)%2===0) ctx.globalAlpha=0.35;
+    if(buffs.ghost>0) ctx.globalAlpha*=0.5; // you can still see yourself, faintly
     const lcol = (P.hurtT>0 && Math.floor(beatT*24)%2===0)? '#ffffff' : myCol();
-    drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?'YOU':null, P.cls);
+    const C0=CLASSES[P.cls];
+    if(buffs.tiny>0){
+      const fx=P.x+P.w/2, fy=P.y+P.h;
+      ctx.save(); ctx.translate(fx,fy); ctx.scale(0.62,0.62); ctx.translate(-fx,-fy);
+      drawDancer(fx-C0.w/2, fy-C0.h, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, null, P.cls);
+      ctx.restore();
+    } else {
+      drawDancer(P.x, P.y, P.facing, aimAngle(), P.gun, lcol, buffs.star>0||buffs.suit>0, P.gunFlash>0, P.vx, MP.on?'YOU':null, P.cls);
+    }
     ctx.globalAlpha=1;
     if(buffs.suit>0){
       ctx.strokeStyle='rgba(232,247,255,0.85)'; ctx.lineWidth=2; ctx.setLineDash([4,4]); ctx.lineDashOffset=-beatT*20;
@@ -2312,6 +2434,7 @@ function drawHelp(){
     ['★ BOUNCED SHOTS','can hit YOU — laser-jump with them'],
     ['★ YOUR MIRRORS','have HP — heavy lasers chew them faster'],
     ['★ PRISMS / ? BOXES','need bounces / respawn loot'],
+    ['★ DASHED PLATFORMS','press S to drop through them'],
     ['★ HYPE SPEAKERS','shoot them — stingers drop ON the beat'],
     ['★ RED ZONES','hazards — do not dance there'],
     ['','—'],
