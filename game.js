@@ -45,6 +45,7 @@ function applyVolumes(){
   audio.sfx.gain.value = 0.55*vol.sfx;
 }
 let volDrag = null, menuSliders = [];
+let codeInput = '', browsePollT = 0;
 
 // ---------- utils ----------
 const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
@@ -477,6 +478,15 @@ window.addEventListener('keydown',e=>{
   if(state!=='play'){
     if(state==='lobby' && e.code==='Escape') leaveToMenu('');
     if(state==='select' && e.code==='Escape') state='menu';
+    if(state==='browse'){
+      if(e.code==='Escape'){ state='menu'; }
+      else if(e.code==='Backspace'){ codeInput=codeInput.slice(0,-1); }
+      else if(e.code==='Enter'){ if(codeInput.length>=4) joinRoom(codeInput); }
+      else if(codeInput.length<4){
+        const mk=e.code.match(/^Key([A-Z])$/), md=e.code.match(/^Digit(\d)$/);
+        if(mk) codeInput+=mk[1]; else if(md) codeInput+=md[1];
+      }
+    }
     return;
   }
   if(e.code==='KeyP'){ if(!MP.on) paused=!paused; return; }
@@ -513,7 +523,7 @@ function updateSliderDrag(){
   applyVolumes();
 }
 canvas.addEventListener('mousedown',e=>{
-  if(state==='menu'||state==='lobby'||state==='select'){
+  if(state==='menu'||state==='lobby'||state==='select'||state==='browse'){
     if(e.button!==0) return;
     for(const s of menuSliders){
       if(mouse.x>=s.x-8&&mouse.x<=s.x+s.w+8&&mouse.y>=s.y-10&&mouse.y<=s.y+s.h+10){
@@ -1566,6 +1576,10 @@ function update(dt){
   beatT+=dt;
   musicTick(dt);
   if(musicActive()) beatT=music.main.el.currentTime; // visuals dance to the actual track
+  if(state==='browse'){ // keep the party list fresh even if a push gets lost
+    browsePollT-=dt;
+    if(browsePollT<=0){ browsePollT=3; net.raw({t:'list'}); }
+  }
   if(state!=='play'||paused) return;
   matchT+=dt;
   helpT-=dt; announceT-=dt; shake=Math.max(0,shake-dt*22);
@@ -2215,10 +2229,9 @@ function drawMenu(){
   addBtn('HOST FACE-OFF','2-4 players · first to 10 frags',()=>hostRoom('vs'),net.ready);
   const stName = menuStageSel===0? 'RANDOM' : STAGES[menuStageSel-1].name;
   addBtn('STAGE: '+stName+'  ⟳','face-off arena · click to cycle',()=>{ menuStageSel=(menuStageSel+1)%(STAGES.length+1); sfxUI(600); });
-  for(const r of roomListData.slice(0,4)){
-    addBtn('JOIN '+r.code+' · '+(r.mode==='vs'?'FACE-OFF':'CO-OP')+' ('+r.count+'/4)',
-      r.mode==='vs'? STAGES[r.stage||0].name : 'dancers waiting', ()=>joinRoom(r.code), net.ready);
-  }
+  addBtn('JOIN A PARTY'+(roomListData.length? '  ('+roomListData.length+' open)':''),
+    roomListData.length? 'live parties are waiting for dancers':'browse sessions or enter a friend\'s code',
+    ()=>{ initAudio(); codeInput=''; menuNotice=''; browsePollT=0; state='browse'; }, net.ready);
   for(const b of menuBtns){
     const hov = b.enabled && mouse.x>=b.x&&mouse.x<=b.x+b.w&&mouse.y>=b.y&&mouse.y<=b.y+b.h;
     ctx.fillStyle= b.enabled? (hov? 'rgba(30,20,70,0.95)':'rgba(10,6,30,0.8)') : 'rgba(10,6,30,0.5)';
@@ -2493,6 +2506,78 @@ function drawSelect(){
   drawCardFx();
   drawCursorDot();
 }
+function drawBrowse(){
+  drawBg(); menuBtns=[]; menuSliders=[];
+  ctx.textAlign='center';
+  ctx.font='bold 34px Segoe UI';
+  ctx.fillStyle='#000'; ctx.fillText('PARTY BROWSER', VW/2+2, VH*0.11+2);
+  ctx.fillStyle=`hsl(${beatT*220%360},100%,65%)`; ctx.fillText('PARTY BROWSER', VW/2, VH*0.11);
+  ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillText(net.ready? 'live list · updates automatically':'connecting to the party server…', VW/2, VH*0.11+24);
+  const w=Math.min(560,VW-80), x=VW/2-w/2;
+  let y=VH*0.19;
+  if(!roomListData.length){
+    ctx.fillStyle='rgba(10,6,30,0.7)';
+    ctx.beginPath(); ctx.roundRect(x,y,w,74,10); ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.font='13px Segoe UI';
+    ctx.fillText('no open parties right now', VW/2, y+32);
+    ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.35)';
+    ctx.fillText("host one from the menu, or punch in a friend's code below", VW/2, y+52);
+    y+=90;
+  } else {
+    for(const r of roomListData.slice(0,8)){
+      menuBtns.push({x,y,w,h:52,action:((c)=>()=>joinRoom(c))(r.code)});
+      const hov=mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+52;
+      ctx.fillStyle= hov? 'rgba(24,18,58,0.95)':'rgba(10,6,30,0.8)';
+      ctx.beginPath(); ctx.roundRect(x,y,w,52,10); ctx.fill();
+      ctx.strokeStyle= hov? '#00ffd9':'rgba(0,255,217,0.3)'; ctx.lineWidth=hov?2.5:1.5; ctx.stroke();
+      ctx.textAlign='left';
+      ctx.fillStyle='#fff'; ctx.font='bold 17px Segoe UI';
+      ctx.fillText(r.code, x+18, y+33);
+      ctx.fillStyle= r.mode==='vs'? '#ffe14d':'#7dff5e'; ctx.font='bold 12px Segoe UI';
+      ctx.fillText(r.mode==='vs'? 'FACE-OFF':'CO-OP', x+100, y+22);
+      ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.font='11px Segoe UI';
+      ctx.fillText(r.mode==='vs'? STAGES[r.stage||0].name : 'vs the bots', x+100, y+38);
+      ctx.textAlign='right';
+      if(w>=380){
+        ctx.fillStyle='rgba(255,255,255,0.75)'; ctx.font='bold 12px Segoe UI';
+        ctx.fillText((r.count||1)+'/4 dancers', x+w-92, y+32);
+      }
+      ctx.fillStyle= hov? '#00ffd9':'rgba(0,255,217,0.7)'; ctx.font='bold 14px Segoe UI';
+      ctx.fillText('JOIN ▶', x+w-16, y+33);
+      y+=60;
+    }
+    y+=14;
+  }
+  ctx.textAlign='center'; ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='bold 12px Segoe UI';
+  ctx.fillText('HAVE A CODE? TYPE IT:', VW/2, y+8);
+  const cwv=46, gapv=10, tot=4*cwv+3*gapv, cx0=VW/2-tot/2;
+  for(let i=0;i<4;i++){
+    const cx=cx0+i*(cwv+gapv);
+    ctx.fillStyle='rgba(10,6,30,0.85)';
+    ctx.beginPath(); ctx.roundRect(cx,y+18,cwv,52,8); ctx.fill();
+    ctx.strokeStyle= i===codeInput.length? `hsl(${beatT*220%360},100%,65%)`:'rgba(255,255,255,0.25)';
+    ctx.lineWidth= i===codeInput.length? 2.5:1.5; ctx.stroke();
+    if(codeInput[i]){
+      ctx.fillStyle='#fff'; ctx.font='bold 26px Segoe UI';
+      ctx.fillText(codeInput[i], cx+cwv/2, y+54);
+    } else if(i===codeInput.length && Math.floor(beatT*2)%2===0){
+      ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.fillRect(cx+cwv/2-1, y+30, 2, 28);
+    }
+  }
+  const canJoin = codeInput.length>=4 && net.ready;
+  const jb={x:VW/2-110,y:y+84,w:220,h:42,label:'JOIN '+(codeInput.length? codeInput:'CODE'),action:()=>{ if(canJoin) joinRoom(codeInput); }};
+  const back={x:VW/2-110,y:y+136,w:220,h:38,label:'◀ BACK [ESC]',action:()=>{ state='menu'; }};
+  menuBtns.push(jb,back);
+  drawBigBtn(jb,'rgba(20,60,30,0.95)','#7dff5e',canJoin);
+  drawBigBtn(back,'rgba(60,10,30,0.9)','#ff4d6d');
+  if(menuNotice){
+    ctx.fillStyle='#ff9d2e'; ctx.font='13px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(menuNotice, VW/2, y+196);
+  }
+  drawCursorDot();
+}
 function drawLobby(){
   drawBg();
   menuBtns=[]; menuSliders=[];
@@ -2561,6 +2646,7 @@ function frame(now){
   update(dt);
   if(state==='menu') drawMenu();
   else if(state==='select') drawSelect();
+  else if(state==='browse') drawBrowse();
   else if(state==='lobby') drawLobby();
   else { drawBg(); drawWorld(); drawHUD(); }
   requestAnimationFrame(frame);
@@ -2587,6 +2673,8 @@ window.LR4 = {
   setClass(i){ setMyPick(i, myColor); },
   setColor(i){ setMyPick(myClass, i); },
   openSelect(){ state='select'; },
+  openBrowse(){ codeInput=''; browsePollT=0; state='browse'; },
+  typeCode(s){ codeInput=(s||'').toUpperCase().slice(0,4); },
   setVol(k,v){ if(k in vol){ vol[k]=clamp(v,0,1); applyVolumes(); saveVol(); } },
   hitFrom(dx,dy,d){ hitKnock(dx,dy,d||20); },
   spawnOrb(x,y,vx,vy){ orbs.push({x,y,vx,vy,life:6}); },
