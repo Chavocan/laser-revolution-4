@@ -422,11 +422,24 @@ const POWERUPS = [
   {id:'wind',  name:'SECOND WIND — CHEAT DEATH ONCE (45s)',short:'2ND WIND', color:'#f0f4ff', w:2, dur:45},
   {id:'orbit', name:'DISCO BUDDY — ORBITING TURRET (12s)', short:'BUDDY',    color:'#ff9df5', w:2, dur:12},
 ];
+// item toggles: host controls them for a room (synced), you control them for solo
+let itemsOn={}, itemsReturn='menu';
+try{ for(const id of JSON.parse(localStorage.getItem('lr4_items_off')||'[]')) itemsOn[id]=false; }catch(e){}
+function itemEnabled(id){ return itemsOn[id]!==false; }
+function itemsOffList(){ return POWERUPS.filter(p=>!itemEnabled(p.id)).map(p=>p.id); }
+function saveItems(broadcast){
+  try{ localStorage.setItem('lr4_items_off', JSON.stringify(itemsOffList())); }catch(e){}
+  if(broadcast!==false && MP.isHost && (MP.on || state==='lobby' || state==='items'))
+    net.raw({t:'items', off:itemsOffList()});
+}
 function rollPowerup(){
-  let tot=0; for(const p of POWERUPS) tot+=p.w;
+  const pool=[];
+  for(let i=0;i<POWERUPS.length;i++) if(itemEnabled(POWERUPS[i].id)) pool.push(i);
+  if(!pool.length) return 0;
+  let tot=0; for(const i of pool) tot+=POWERUPS[i].w;
   let r=Math.random()*tot;
-  for(let i=0;i<POWERUPS.length;i++){ r-=POWERUPS[i].w; if(r<=0) return i; }
-  return 0;
+  for(const i of pool){ r-=POWERUPS[i].w; if(r<=0) return i; }
+  return pool[0];
 }
 const buffs = {fever:0, amp:0, over:0, star:0, hook:0, jet:0, moon:0, blink:0, suit:0, skate:0, tiny:0, rubber:0, ghost:0,
   magnet:0, bigshot:0, triple:0, vamp:0, pogo:0, mega:0, wind:0, orbit:0};
@@ -602,6 +615,7 @@ function onNet(m){
       state='lobby';
       lobbyPicks[MP.you]={cls:myClass,col:myColor};
       net.raw({t:'pick', who:MP.you, cls:myClass, col:myColor});
+      if(MP.isHost) net.raw({t:'items', off:itemsOffList()}); // sync item toggles to (re)joiners
       break;
     case 'pick':
       lobbyPicks[m.who]={cls:m.cls||0, col:m.col};
@@ -651,10 +665,25 @@ function onNet(m){
         sparks(b.x,b.y,'#ff9df5',10,180); popup(b.x,b.y-24,'P'+(m.who+1)+' GRABBED LOOT','#ff9df5',13); }
       break;
     case 'lootUp': if(loot[m.i]) loot[m.i].active=true; break;
+    case 'items':
+      if(MP.isHost) break; // only the host's list applies
+      itemsOn={};
+      for(const id of (m.off||[])) itemsOn[id]=false;
+      break;
     case 'swap':
       if(m.to!==MP.you) break;
+      { const oldX=Math.round(P.x), oldY=Math.round(P.y);
+        sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
+        safePlace(m.x, m.y);
+        net.send({t:'swapAt', who:MP.you, to:m.who, x:oldX, y:oldY});
+        sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
+        popup(P.x+P.w/2,P.y-20,'SWITCHED!','#ffe14d',15); }
+      break;
+    case 'swapAt':
+      if(m.to!==MP.you) break;
       sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
-      P.x=m.x; P.y=m.y; P.vx=P.vy=0;
+      safePlace(m.x, m.y);
+      sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
       popup(P.x+P.w/2,P.y-20,'SWITCHED!','#ffe14d',15);
       break;
     case 'sting':
@@ -712,6 +741,7 @@ window.addEventListener('keydown',e=>{
     if(state==='lobby' && e.code==='Escape') leaveToMenu('');
     if(state==='select' && e.code==='Escape') state='menu';
     if(state==='missions' && e.code==='Escape') state='menu';
+    if(state==='items' && e.code==='Escape') state=itemsReturn;
     if(state==='browse'){
       if(e.code==='Escape'){ state='menu'; }
       else if(e.code==='Backspace'){ codeInput=codeInput.slice(0,-1); }
@@ -773,7 +803,7 @@ function updateSliderDrag(){
   applyVolumes();
 }
 canvas.addEventListener('mousedown',e=>{
-  if(state==='menu'||state==='lobby'||state==='select'||state==='browse'||state==='missions'){
+  if(state==='menu'||state==='lobby'||state==='select'||state==='browse'||state==='missions'||state==='items'){
     if(e.button!==0) return;
     for(const s of menuSliders){
       if(mouse.x>=s.x-8&&mouse.x<=s.x+s.w+8&&mouse.y>=s.y-10&&mouse.y<=s.y+s.h+10){
@@ -1469,7 +1499,7 @@ function updateLoot(dt){
         if(POWERUPS[p].id==='mirror' && mirrorMax>=MIRROR_CAP) p=0;
         if(firstLoot){ // your first box each match pays out your class signature item
           const fi=POWERUPS.findIndex(q=>q.id===CLASSES[P.cls].start);
-          if(fi>=0) p=fi;
+          if(fi>=0 && itemEnabled(POWERUPS[fi].id)) p=fi;
           firstLoot=false;
         }
         roul.active=true; roul.t=0; roul.pick=p; roul.tickT=0;
@@ -1562,15 +1592,17 @@ function applyPowerup(i){
       const alive=[]; if(MP.on) for(let k=0;k<4;k++) if(k!==MP.you && peers[k].on && peers[k].hp>0) alive.push(k);
       sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
       if(alive.length){
+        // handshake: victim teleports to my spot and replies with THEIR authoritative
+        // position — no trusting laggy interpolated coordinates
         const t=alive[Math.floor(Math.random()*alive.length)];
         net.send({t:'swap', who:MP.you, to:t, x:Math.round(P.x), y:Math.round(P.y)});
-        P.x=peers[t].x; P.y=peers[t].y; P.vx=P.vy=0;
+        popup(P.x+P.w/2,P.y-20,'SWITCHING…','#ffe14d',14);
       } else {
         const sp=spawns[Math.floor(Math.random()*spawns.length)];
-        P.x=sp.x; P.y=sp.y-(P.h-46); P.vx=P.vy=0;
+        safePlace(sp.x, sp.y-(P.h-46));
+        sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
+        popup(P.x+P.w/2,P.y-20,'SWITCHED!','#ffe14d',15);
       }
-      sparks(P.x+P.w/2,P.y+P.h/2,'#ffe14d',12,220);
-      popup(P.x+P.w/2,P.y-20,'SWITCHED!','#ffe14d',15);
       break; }
     case 'decoy': {
       const d={x:P.x+P.w/2,y:P.y+P.h,who:MP.you,t:12,seed:rnd(10),cls:P.cls,col:myColor};
@@ -1866,6 +1898,23 @@ function updatePlayer(dt){
 }
 // direction-aware knockback: spiked from above = slammed down (floor-bounce),
 // shot from below = launched, side hits = shoved.
+// teleport that refuses to strand you inside geometry or off the map
+function safePlace(x,y){
+  P.x=clamp(x,10,W-P.w-10); P.y=clamp(y,10,H-P.h-10);
+  P.vx=P.vy=0; P.dashT=0; P.hook=null;
+  for(let i=0;i<40;i++){
+    let hit=null;
+    for(const s of solids){ if(s.oneWay||s.drop) continue;
+      if(rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},s)){ hit=s; break; } }
+    if(!hit) break;
+    P.y=hit.y-P.h-2; // pop on top of whatever we're inside
+    if(P.y<10) break;
+  }
+  let bad=P.y<10;
+  if(!bad) for(const s of solids){ if(s.oneWay||s.drop) continue;
+    if(rectsOverlap({x:P.x,y:P.y,w:P.w,h:P.h},s)){ bad=true; break; } }
+  if(bad){ const sp=spawns[Math.floor(Math.random()*spawns.length)]; P.x=sp.x; P.y=sp.y-(P.h-46); P.vx=P.vy=0; }
+}
 function hitKnock(dx,dy,dmg,mul){
   const k=clamp(dmg,5,60)*(mul||1);
   if(dy>0.65){
@@ -3143,13 +3192,65 @@ function drawSelect(){
   const topY=VH*0.17;
   drawClassRow(VW/2, topY, cw, ch, false);
   drawSwatchRow(VW/2, topY+ch+32);
-  const bw=210, bh=44, byy=Math.min(VH-64, topY+ch+62);
-  const back={x:VW/2-bw-12,y:byy,w:bw,h:bh,label:'◀ BACK',action:()=>{ state='menu'; }};
-  const go={x:VW/2+12,y:byy,w:bw,h:bh,label:'START SOLO PARTY ▶',action:()=>startSolo()};
-  menuBtns.push(back,go);
+  const bw=170, bh=44, byy=Math.min(VH-64, topY+ch+62);
+  const back={x:VW/2-bw-bw/2-24,y:byy,w:bw,h:bh,label:'◀ BACK',action:()=>{ state='menu'; }};
+  const items={x:VW/2-bw/2,y:byy,w:bw,h:bh,label:'ITEMS ('+(POWERUPS.length-itemsOffList().length)+')',action:()=>{ itemsReturn='select'; state='items'; }};
+  const go={x:VW/2+bw/2+24,y:byy,w:bw,h:bh,label:'START ▶',action:()=>startSolo()};
+  menuBtns.push(back,items,go);
   drawBigBtn(back,'rgba(60,10,30,0.9)','#ff4d6d');
+  drawBigBtn(items,'rgba(30,20,70,0.95)','#7de8ff');
   drawBigBtn(go,'rgba(20,60,30,0.95)','#7dff5e');
   drawCardFx();
+  drawCursorDot();
+}
+function drawItems(){
+  drawBg(); menuBtns=[]; menuSliders=[];
+  const canEdit = itemsReturn!=='lobby' || MP.isHost;
+  ctx.textAlign='center';
+  ctx.font='bold 34px Segoe UI';
+  ctx.fillStyle='#000'; ctx.fillText('ITEM SETTINGS', VW/2+2, VH*0.1+2);
+  ctx.fillStyle=`hsl(${beatT*220%360},100%,65%)`; ctx.fillText('ITEM SETTINGS', VW/2, VH*0.1);
+  ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillText(canEdit? 'click to toggle what the ? boxes can drop' : 'view only — the host controls the loot pool', VW/2, VH*0.1+24);
+  const cols=Math.max(3,Math.min(5,Math.floor((VW-80)/160)));
+  const cw2=150, chh=38, gap2=10;
+  const total=cols*cw2+(cols-1)*gap2, x0=VW/2-total/2;
+  let y=VH*0.17;
+  for(let i=0;i<POWERUPS.length;i++){
+    const p=POWERUPS[i];
+    const x=x0+(i%cols)*(cw2+gap2);
+    if(i>0 && i%cols===0) y+=chh+8;
+    const on=itemEnabled(p.id);
+    if(canEdit) menuBtns.push({x,y,w:cw2,h:chh,action:((id)=>()=>{ itemsOn[id]= itemEnabled(id)? false : true; if(itemsOn[id]) delete itemsOn[id]; saveItems(); sfxUI(on?420:760); })(p.id)});
+    const hov=canEdit && mouse.x>=x&&mouse.x<=x+cw2&&mouse.y>=y&&mouse.y<=y+chh;
+    ctx.fillStyle= on? (hov?'rgba(24,18,58,0.95)':'rgba(14,10,40,0.85)') : 'rgba(10,6,30,0.5)';
+    ctx.beginPath(); ctx.roundRect(x,y,cw2,chh,7); ctx.fill();
+    ctx.strokeStyle= on? p.color : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth= hov? 2.2:1.4; ctx.stroke();
+    ctx.textAlign='left';
+    ctx.fillStyle= on? p.color:'rgba(255,255,255,0.3)';
+    ctx.font='bold 10px Segoe UI';
+    ctx.fillText((on?'● ':'○ ')+p.short, x+9, y+16);
+    ctx.fillStyle= on? 'rgba(255,255,255,0.45)':'rgba(255,255,255,0.2)';
+    ctx.font='9px Segoe UI';
+    const nm=p.name.length>26? p.name.slice(0,25)+'…' : p.name;
+    ctx.fillText(nm, x+9, y+29);
+  }
+  y+=chh+22;
+  const offN=itemsOffList().length;
+  ctx.textAlign='center'; ctx.font='12px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillText((POWERUPS.length-offN)+'/'+POWERUPS.length+' items in the pool', VW/2, y);
+  const bw2=150, byy=Math.min(VH-56, y+16);
+  if(canEdit){
+    const allOn={x:VW/2-bw2-170,y:byy,w:bw2,h:38,label:'ALL ON',action:()=>{ itemsOn={}; saveItems(); sfxUI(760); }};
+    const allOff={x:VW/2-bw2/2-80,y:byy,w:bw2,h:38,label:'ALL OFF',action:()=>{ for(const p of POWERUPS) itemsOn[p.id]=false; saveItems(); sfxUI(420); }};
+    menuBtns.push(allOn,allOff);
+    drawBigBtn(allOn,'rgba(20,60,30,0.95)','#7dff5e');
+    drawBigBtn(allOff,'rgba(60,10,30,0.9)','#ff9d2e');
+  }
+  const back={x:VW/2+90,y:byy,w:200,h:38,label:'◀ DONE [ESC]',action:()=>{ state=itemsReturn; }};
+  menuBtns.push(back);
+  drawBigBtn(back,'rgba(60,10,30,0.9)','#ff4d6d');
   drawCursorDot();
 }
 function drawMissions(){
@@ -3304,11 +3405,13 @@ function drawLobby(){
   const canStart = MP.isHost && li.players.length>=2;
   const byy=Math.min(VH-56, rowY+ch+44);
   if(MP.isHost){
-    const b={x:VW/2-176,y:byy,w:230,h:42,label: canStart?'START THE APOCALYPSE':'NEED 2+ DANCERS',
+    const b={x:VW/2-236,y:byy,w:230,h:42,label: canStart?'START THE APOCALYPSE':'NEED 2+ DANCERS',
       action:()=>{ if(canStart) net.raw({t:'begin'}); }};
-    const c={x:VW/2+66,y:byy,w:110,h:42,label:'CANCEL',action:()=>leaveToMenu('')};
-    menuBtns.push(b,c);
+    const it={x:VW/2+2,y:byy,w:110,h:42,label:'ITEMS',action:()=>{ itemsReturn='lobby'; state='items'; }};
+    const c={x:VW/2+120,y:byy,w:110,h:42,label:'CANCEL',action:()=>leaveToMenu('')};
+    menuBtns.push(b,it,c);
     drawBigBtn(b,'rgba(20,60,30,0.95)','#7dff5e',canStart);
+    drawBigBtn(it,'rgba(30,20,70,0.95)','#7de8ff');
     drawBigBtn(c,'rgba(60,10,30,0.9)','#ff4d6d');
   } else {
     ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='13px Segoe UI'; ctx.textAlign='center';
@@ -3333,6 +3436,7 @@ function frame(now){
   else if(state==='select') drawSelect();
   else if(state==='browse') drawBrowse();
   else if(state==='missions') drawMissions();
+  else if(state==='items') drawItems();
   else if(state==='lobby') drawLobby();
   else { drawBg(); drawWorld(); drawHUD(); }
   requestAnimationFrame(frame);
@@ -3367,6 +3471,9 @@ window.LR4 = {
   upg:()=>({...upg}),
   mission(i){ startMission(i); },
   missionState:()=>mission? {id:mission.def.id, t:+mission.t.toFixed(1), over:missionOver, enemies:enemies.filter(e=>!e.dead).length, orbs:orbs.length} : null,
+  safeTo(x,y){ safePlace(x,y); },
+  setItems(offIds){ itemsOn={}; for(const id of (offIds||[])) itemsOn[id]=false; saveItems(false); },
+  itemsOff:()=>itemsOffList(),
   spawnOrb(x,y,vx,vy){ orbs.push({x,y,vx,vy,life:6}); },
   mirrorsDbg:()=>playerMirrors.map(m=>({id:m.id,hp:m.hp,x:m.x,y:m.y,angle:m.angle})),
   orbs:()=>orbs.map(o=>({x:Math.round(o.x),y:Math.round(o.y),vx:Math.round(o.vx),vy:Math.round(o.vy),r:!!o.reflected})),
