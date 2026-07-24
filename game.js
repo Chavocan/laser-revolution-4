@@ -1374,10 +1374,20 @@ function updatePlayer(dt){
     if(Math.random()<0.7) particles.push({x:P.x+P.w/2,y:P.y+P.h/2,vx:0,vy:0,life:0.25,max:0.25,color:buffs.star>0?`hsl(${beatT*400%360},100%,65%)`:'#00ffd9',size:9,grav:0,ghost:true});
   } else {
     const acc = P.grounded?3600:2200;
-    if(move) P.vx += move*acc*dt;
-    else if(P.grounded){ const f=2800*dt; if(Math.abs(P.vx)<=f)P.vx=0; else P.vx-=Math.sign(P.vx)*f; }
-    else P.vx*=Math.pow(0.3,dt);
-    P.vx=clamp(P.vx,-maxSpd,maxSpd);
+    const dir=Math.sign(P.vx);
+    const over = Math.abs(P.vx)>maxSpd+1; // carrying dash momentum
+    if(move && !(over && move===dir)) P.vx += move*acc*dt;
+    else if(!move && P.grounded && !over){ const f=2800*dt; if(Math.abs(P.vx)<=f)P.vx=0; else P.vx-=Math.sign(P.vx)*f; }
+    else if(!move && !P.grounded && !over) P.vx*=Math.pow(0.3,dt);
+    if(over){
+      // dash momentum bleeds toward run speed instead of hard-stopping;
+      // hold the direction to ride the slide, jump out of it to carry it airborne
+      const bleed = (P.grounded? (move===dir? 550:1600) : 300)*dt;
+      P.vx -= dir*bleed;
+      if(Math.abs(P.vx)<maxSpd) P.vx=dir*maxSpd;
+    } else {
+      P.vx=clamp(P.vx,-maxSpd,maxSpd);
+    }
     let g=GRAV*gravMul;
     if(keys.KeyS && !P.grounded) g*=1.7;
     if(P.hook){
@@ -1399,7 +1409,7 @@ function updatePlayer(dt){
   P.dashCd-=dt; P.coyote-=dt; P.jumpBuf-=dt; P.dropT-=dt; P.blinkCd-=dt; P.spikedT-=dt; P.hurtT-=dt;
 
   if(P.jumpBuf>0){
-    if(P.grounded||P.coyote>0){ P.vy=-680; P.grounded=false; P.coyote=0; P.jumpBuf=0; P.hook=null; }
+    if(P.grounded||P.coyote>0){ P.vy=-680; P.grounded=false; P.coyote=0; P.jumpBuf=0; P.hook=null; P.dashT=0; } // jump cancels dash, momentum rides along
     else if(P.hook){ P.hook=null; P.vy=-580; P.jumpBuf=0; P.airJumps=Math.max(P.airJumps,1); }
     else if(P.wallL){ P.vy=-640; P.vx=440; P.jumpBuf=0; sparks(P.x,P.y+P.h/2,'#00ffd9',5,120); }
     else if(P.wallR){ P.vy=-640; P.vx=-440; P.jumpBuf=0; sparks(P.x+P.w,P.y+P.h/2,'#00ffd9',5,120); }
