@@ -83,17 +83,23 @@ visible — hidden browser tabs throttle their sim.
 | SHIFT + A/D/W/S | 8-way dash (W = up) — refunds a jump when it ends |
 | S | fast-fall / drop through grates |
 | Mouse + LMB | aim + fire · [T] toggles laser sight (**only you see yours**) |
-| 1–4 / scroll | weapons (pistol / shredder / scatter / charge lance) |
-| E or RMB | mirror placement (scroll/R rotate, click place, X pick up) |
+| R | reload (automatic when the mag runs dry) |
+| HOLD RMB | quick-place a mirror — ghost auto-angles perpendicular to your aim, scroll rotates (SHIFT+scroll 5°), release places |
+| E | deliberate mirror-place mode (click places) · X picks up |
 | Q / F / C | hook · throw item · blink (when looted) |
-| H / P / M | help / pause (solo) / mute |
+| H / M / ESC×2 | help / mute / quit to menu |
+
+Weapons are class-fixed with energy magazines — pistol 12 / shredder 40 / scatter 6 shells /
+lance 3 charges — and distinct ranges (long / mid / close / cross-map). Reloads are quick;
+Fever Fire speeds them up.
 
 ## Mirrors
 
 - You may have **3 placed at once** (never consumed) — placing a 4th recycles your oldest.
 - Loot can raise your cap **+1 up to 6** for the match.
-- **Player mirrors shatter after 5 bounces** (cracks accumulate). Stage mirrors
-  are indestructible.
+- **Player mirrors have 120 HP** — each bounce drains the beam's damage, so a lance
+  chews through one in ~3 bounces while shredder pellets get ~30 (cracks grow as HP
+  drops). Stage mirrors are indestructible.
 - **All mirrors deflect enemy orbs.** A deflected orb turns cyan, becomes friendly, and
   damages bots — bounce one into a prism and it counts as the required bounce.
 

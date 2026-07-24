@@ -17,7 +17,7 @@ window.addEventListener('resize', resize); resize();
 // ---------- constants ----------
 const W = 3600, H = 1500;
 const GRAV = 1900, BPM = 128;
-const MIRROR_HITS = 5;        // player mirrors shatter after this many bounces
+const MIRROR_HP = 120;        // player mirrors absorb this much laser damage before shattering
 const MIRROR_BASE = 3, MIRROR_CAP = 6;
 
 // ---------- character classes ----------
@@ -46,6 +46,8 @@ function applyVolumes(){
 }
 let volDrag = null, menuSliders = [];
 let codeInput = '', browsePollT = 0;
+let escT = 0; // double-ESC quit confirmation window
+let rmbGhost = false; // hold-RMB quick mirror placement
 
 // ---------- utils ----------
 const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
@@ -262,10 +264,10 @@ let balls = [], decoys = [];
 
 // ---------- guns ----------
 const GUNS = [
-  {name:'GROOVE PISTOL',   desc:'reliable · 6 bounces',       auto:false, rof:3.5, dmg:12, spread:0,    range:2200, maxB:6,  bMult:1.5,  beamW:3,   color:'#00ffd9', pellets:1, sfx:'pew'},
-  {name:'DISCO SHREDDER',  desc:'hold to spray · sloppy aim', auto:true,  rof:13,  dmg:4,  spread:0.13, range:1500, maxB:3,  bMult:1.6,  beamW:2,   color:'#ff3df0', pellets:1, sfx:'zap'},
-  {name:'MIRRORBALL SCATTER',desc:'6-beam fan · short range', auto:false, rof:1.5, dmg:5,  spread:0.45, range:760,  maxB:4,  bMult:1.7,  beamW:2.5, color:'#ffe14d', pellets:6, sfx:'boom'},
-  {name:'RAVE LANCE',      desc:'HOLD to charge · pierces · 10 bounces', auto:false, charge:true, rof:0.9, dmg:46, spread:0, range:4200, maxB:10, bMult:1.35, beamW:5, color:'#b44bff', pellets:1, pierce:true, sfx:'lance'},
+  {name:'GROOVE PISTOL',   desc:'reliable · 6 bounces · long range', auto:false, rof:3.5, dmg:12, spread:0,    range:1900, maxB:6,  bMult:1.5,  beamW:3,   color:'#00ffd9', pellets:1, sfx:'pew',  mag:12, rel:1.1},
+  {name:'DISCO SHREDDER',  desc:'hold to spray · mid range',  auto:true,  rof:13,  dmg:4,  spread:0.13, range:1150, maxB:3,  bMult:1.6,  beamW:2,   color:'#ff3df0', pellets:1, sfx:'zap',  mag:40, rel:1.6},
+  {name:'MIRRORBALL SCATTER',desc:'6-beam fan · close range', auto:false, rof:1.5, dmg:5,  spread:0.45, range:620,  maxB:4,  bMult:1.7,  beamW:2.5, color:'#ffe14d', pellets:6, sfx:'boom', mag:6,  rel:1.8},
+  {name:'RAVE LANCE',      desc:'HOLD + release · pierces · cross-map', auto:false, charge:true, rof:0.9, dmg:46, spread:0, range:4200, maxB:10, bMult:1.35, beamW:5, color:'#b44bff', pellets:1, pierce:true, sfx:'lance', mag:3, rel:2.2},
 ];
 const BALLGUN = {name:'DISCO BALL', dmg:8, spread:0, range:680, maxB:2, bMult:1.6, beamW:2.2, color:'#ff9df5', pellets:1, sfx:'zap'};
 function effGun(g){
@@ -283,7 +285,7 @@ const P = {
   coyote:0, jumpBuf:0, airJumps:1, dropT:0,
   dashT:0, dashCd:0, dashVX:0, dashVY:0, canAirDash:true,
   hp:100, maxHp:100, invulnT:0, sinceHurt:99, deadT:0, spikedT:0, cls:0,
-  gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0,
+  gun:0, fireCd:0, chargeT:-1, gunFlash:0, blinkCd:0, ammo:12, reloadT:0,
   facing:1, hook:null, spawn:{x:140,y:1334},
 };
 const PCOLS = ['#00ffd9','#ff9d2e','#7dff5e','#ff4dd2'];
@@ -449,6 +451,7 @@ function initWorld(mode, stage){
   const sp = spawns[MP.on? MP.you : 0] || spawns[0];
   P.spawn=sp; P.x=sp.x; P.y=sp.y-(C.h-46); P.vx=P.vy=0; P.hp=C.hp; P.deadT=0; P.invulnT=1;
   P.gun=C.gun; P.chargeT=-1; P.hook=null; P.airJumps=1; P.canAirDash=true; P.dashT=0; P.dashCd=0; P.blinkCd=0; P.spikedT=0;
+  P.ammo=GUNS[C.gun].mag; P.reloadT=0;
   for(const p of peers){ Object.assign(p, newPeer()); }
   placing=false; helpT = mode==='solo'? 12:8; helpPin=false;
   announceT=0; paused=false; matchT=0;
@@ -495,13 +498,17 @@ window.addEventListener('keydown',e=>{
   if(e.code==='Equal'||e.code==='NumpadAdd'){ vol.master=clamp(vol.master+0.05,0,1); applyVolumes(); saveVol(); popup(P.x+P.w/2,P.y-30,'VOL '+Math.round(vol.master*100)+'%','#cfe8ff',13); return; }
   if(e.code==='KeyH'){ helpPin=!helpPin; helpT=0; return; }
   if(e.code==='KeyT'){ sightOn=!sightOn; sfxUI(sightOn?700:400); return; }
-  if(e.code==='Escape'){ if(MP.on) leaveToMenu(''); return; }
+  if(e.code==='Escape'){ // works in solo AND multiplayer: press twice to quit
+    if(escT>0){ escT=0; leaveToMenu(''); }
+    else escT=2.2;
+    return;
+  }
   if(paused) return;
   if(e.code==='Space') P.jumpBuf=0.12; // SPACE jumps; W is just "up" for dash aiming
   if(e.code==='ShiftLeft'||e.code==='ShiftRight') tryDash();
   if(e.code==='KeyS'&&P.onOneWay) P.dropT=0.22;
   if(e.code==='KeyE'){ placing=!placing; sfxUI(placing?760:420); }
-  if(e.code==='KeyR'&&placing) ghostAngle=(ghostAngle+15)%360;
+  if(e.code==='KeyR'){ if(placing||rmbGhost) ghostAngle=(ghostAngle+15)%360; else startReload(); }
   if(e.code==='KeyX') pickupMirror();
   if(e.code==='KeyQ') tryHook();
   if(e.code==='KeyF') throwItem();
@@ -533,17 +540,34 @@ canvas.addEventListener('mousedown',e=>{
     menuClick();
     return;
   }
-  if(e.button===2){ if(state==='play'){ placing=!placing; sfxUI(placing?760:420); } return; }
+  if(e.button===2){
+    // hold RMB: quick-place ghost, auto-angled perpendicular to your aim (bank-shot ready)
+    if(state==='play' && !paused && !placing){
+      rmbGhost=true;
+      const deg=aimAngle()*180/Math.PI+90;
+      ghostAngle=((Math.round(deg/15)*15)%360+360)%360;
+      sfxUI(700);
+    }
+    return;
+  }
   if(e.button!==0) return;
   mouse.down=true; mouse.pressed=true;
 });
 window.addEventListener('mouseup',e=>{
+  if(e.button===2){
+    if(rmbGhost){ rmbGhost=false; if(state==='play' && !paused) tryPlaceMirror(); }
+    return;
+  }
   if(e.button!==0) return;
   mouse.down=false;
   if(volDrag){ volDrag=null; saveVol(); }
   if(state==='play' && !paused && !placing && P.chargeT>=0){
     const g=effGun(GUNS[P.gun]);
-    if(g.charge){ shoot(g, aimAngle(), 0.35+0.65*clamp(P.chargeT,0,1)); P.fireCd=1/g.rof; }
+    if(g.charge && P.ammo>0 && P.reloadT<=0){
+      shoot(g, aimAngle(), 0.35+0.65*clamp(P.chargeT,0,1)); P.fireCd=1/g.rof;
+      P.ammo--;
+      if(P.ammo<=0) startReload();
+    }
     P.chargeT=-1;
   }
 });
@@ -552,7 +576,10 @@ canvas.addEventListener('wheel',e=>{
   e.preventDefault();
   if(state!=='play') return;
   const s = e.deltaY>0?1:-1;
-  if(placing) ghostAngle=(ghostAngle+15*s+360)%360;
+  if(placing||rmbGhost){
+    const step=(keys.ShiftLeft||keys.ShiftRight)?5:15;
+    ghostAngle=(ghostAngle+step*s+360)%360;
+  }
 },{passive:false});
 
 function aimAngle(){
@@ -768,8 +795,9 @@ function musicNode(src){
   n={el,g}; music.els[src]=n;
   return n;
 }
-function pickTrack(key){
-  const list=(MUSIC_SETS[key]||[]).filter(s=>!music.broken[s]);
+function pickTrack(key, avoid){
+  let list=(MUSIC_SETS[key]||[]).filter(s=>!music.broken[s]);
+  if(avoid && list.length>1) list=list.filter(s=>s!==avoid);
   return list.length? list[Math.floor(Math.random()*list.length)] : null;
 }
 function musicActive(){ return !!(music.main && !music.main.el.paused && !music.main.el.error); }
@@ -788,10 +816,13 @@ function setMainMusic(key){
     setTimeout(()=>{ if(music.main!==old) old.el.pause(); },600);
   }
   music.main=null;
-  const src=pickTrack(key);
+  const src=pickTrack(key, music.curSrc);
   if(!src) return;
+  music.curSrc=src;
   const n=musicNode(src);
-  n.el.loop=true; n.el.currentTime=0;
+  // single-track sets loop; multi-track sets rotate on 'ended' (see musicTick)
+  n.el.loop = (MUSIC_SETS[key]||[]).filter(s=>!music.broken[s]).length<=1;
+  n.el.currentTime=0;
   const pr=n.el.play(); if(pr) pr.catch(()=>{});
   music.duck=0.9;
   fadeGain(n.g,0.9,0.7);
@@ -834,6 +865,23 @@ function musicTick(dt){
     fadeGain(music.danger.g,0,0.8);
     const d=music.danger; setTimeout(()=>d.el.pause(),900);
     music.danger=null;
+  }
+  // variety + resilience: rotate to a fresh track when one ends,
+  // nudge paused elements back to life, and bail out of stalled streams
+  if(music.main){
+    const el=music.main.el;
+    if(el.ended || el.error){
+      const key=music.mainKey; music.mainKey=null; setMainMusic(key);
+    } else if(el.paused){
+      music.resumeT=(music.resumeT||0)-dt;
+      if(music.resumeT<=0){ music.resumeT=1; const pr=el.play(); if(pr) pr.catch(()=>{}); }
+    } else {
+      if(Math.abs(el.currentTime-(music.lastCt!=null?music.lastCt:-1))<0.004){
+        music.stallT=(music.stallT||0)+dt;
+        if(music.stallT>3){ music.stallT=0; const key=music.mainKey; music.mainKey=null; setMainMusic(key); }
+      } else music.stallT=0;
+      music.lastCt=el.currentTime;
+    }
   }
   const duckTarget = music.over? 0.12 : music.danger? 0.3 : 0.9;
   if(music.main && music.duck!==duckTarget){ music.duck=duckTarget; fadeGain(music.main.g,duckTarget,0.4); }
@@ -880,6 +928,13 @@ function castSolids(x,y,dx,dy,maxDist){
     const h=rayRect(x,y,dx,dy,s);
     if(h && h.t<=maxDist && (!best||h.t<best.t)) best=h; }
   return best;
+}
+function startReload(){
+  const g=GUNS[P.gun];
+  if(P.reloadT>0 || P.ammo>=g.mag || P.deadT>0) return;
+  P.reloadT=g.rel;
+  P.chargeT=-1;
+  tone('square',320,160,0.1,0.2); sfxNoise(0.08,0.2,1800);
 }
 function shoot(gun,angle,dmgMul){
   const mul=(dmgMul||1)*(buffs.amp>0?1.5:1);
@@ -934,17 +989,17 @@ function fireBeam(ox,oy,angle,gun,dmgMul,opts){
     range-=hit.t;
     pts.push({x:hx,y:hy});
     if(hit.kind==='mirror' && bounces<maxB){
+      // player-placed mirrors soak the incoming beam's damage (shooter's sim decides)
+      if(hit.mirror.player && damaging){
+        hit.mirror.hp=(hit.mirror.hp!=null? hit.mirror.hp : MIRROR_HP)-dmg;
+        if(hit.mirror.hp<=0) breakMirrorById(hit.mirror.id, true);
+      }
       bounces++; dmg*=gun.bMult;
       if(!opts.quiet) sfxBounce(bounces);
       sparks(hx,hy,gun.color,7,180);
       const d=dx*hit.nx+dy*hit.ny;
       dx-=2*d*hit.nx; dy-=2*d*hit.ny;
       x=hx+dx*0.6; y=hy+dy*0.6; skipM=hit.mirror;
-      // player-placed mirrors wear out (only the shooter's sim decides)
-      if(hit.mirror.player && damaging){
-        hit.mirror.hits=(hit.mirror.hits||0)+1;
-        if(hit.mirror.hits>=MIRROR_HITS) breakMirrorById(hit.mirror.id, true);
-      }
       if(range<=0) break;
       continue;
     }
@@ -1096,7 +1151,7 @@ function tryPlaceMirror(){
     sparks(old.x,old.y,'#7dff5e',6,120);
     net.send({t:'mpick', id:old.id});
   }
-  const m={id:'m'+MP.you+'-'+(mirrorIdSeq++), x:mx,y:my,angle:ghostAngle,len:90,player:true,owner:MP.you,hits:0};
+  const m={id:'m'+MP.you+'-'+(mirrorIdSeq++), x:mx,y:my,angle:ghostAngle,len:90,player:true,owner:MP.you,hp:MIRROR_HP};
   playerMirrors.push(m);
   sfxPlace(); sparks(mx,my,'#7dff5e',8,140);
   net.send({t:'mplace', m});
@@ -1298,6 +1353,7 @@ function updatePlayer(dt){
     if(P.deadT<=0){
       const sp = (MP.on && MP.mode==='vs')? spawns[Math.floor(Math.random()*spawns.length)] : P.spawn;
       P.x=sp.x; P.y=sp.y-(P.h-46); P.vx=P.vy=0; P.hp=P.maxHp; P.invulnT=2;
+      P.ammo=GUNS[P.gun].mag; P.reloadT=0;
       if(!MP.on || MP.mode!=='vs') score=Math.max(0,score-200);
     }
     return;
@@ -1400,13 +1456,21 @@ function updatePlayer(dt){
 
   P.fireCd-=dt; P.gunFlash-=dt;
   const g=effGun(GUNS[P.gun]);
-  if(!placing){
+  if(P.reloadT>0){
+    P.reloadT-=dt*(buffs.fever>0?1.6:1); // fever fire = fast hands
+    if(P.reloadT<=0){ P.ammo=g.mag; sfxUI(920); popup(P.x+P.w/2,P.y-24,'LOADED','#7dff5e',12); }
+  }
+  if(!placing && P.reloadT<=0){
     if(g.charge){
-      if(mouse.down && P.fireCd<=0){ if(P.chargeT<0)P.chargeT=0; P.chargeT+=dt/0.85; if(P.chargeT>1)P.chargeT=1; }
+      if(mouse.down && P.fireCd<=0 && P.ammo>0){ if(P.chargeT<0)P.chargeT=0; P.chargeT+=dt/0.85; if(P.chargeT>1)P.chargeT=1; }
     } else if(mouse.down && P.fireCd<=0 && (g.auto||mouse.pressed)){
-      shoot(g, aimAngle(), 1); P.fireCd=1/g.rof;
+      if(P.ammo>0){
+        shoot(g, aimAngle(), 1); P.fireCd=1/g.rof;
+        P.ammo--;
+        if(P.ammo<=0) startReload();
+      } else startReload();
     }
-  } else if(mouse.pressed){
+  } else if(placing && mouse.pressed){
     tryPlaceMirror();
   }
   mouse.pressed=false;
@@ -1582,7 +1646,7 @@ function update(dt){
   }
   if(state!=='play'||paused) return;
   matchT+=dt;
-  helpT-=dt; announceT-=dt; shake=Math.max(0,shake-dt*22);
+  helpT-=dt; announceT-=dt; escT-=dt; shake=Math.max(0,shake-dt*22);
 
   updatePlayer(dt);
   if(MP.isHost || !MP.on) updateEnemiesHost(dt);
@@ -1764,10 +1828,11 @@ function drawWorld(){
     const ax=lerp(e.x1,e.x2,clamp(sh-0.08,0,1)), ay=lerp(e.y1,e.y2,clamp(sh-0.08,0,1));
     const bx=lerp(e.x1,e.x2,clamp(sh,0,1)), by=lerp(e.y1,e.y2,clamp(sh,0,1));
     ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
-    if(m.player && (m.hits||0)>0){
-      // cracks accumulate; at MIRROR_HITS it shatters
+    if(m.player && m.hp!=null && m.hp<MIRROR_HP){
+      // cracks grow as the mirror's HP drains
       ctx.strokeStyle='rgba(20,30,40,0.9)'; ctx.lineWidth=1.5;
-      for(let k=0;k<Math.min(m.hits,MIRROR_HITS-1);k++){
+      const cracks=1+Math.floor((1-Math.max(0,m.hp)/MIRROR_HP)*3);
+      for(let k=0;k<cracks;k++){
         const u=0.2+0.6*sr(k*7+m.x);
         const mx=lerp(e.x1,e.x2,u), my=lerp(e.y1,e.y2,u);
         ctx.beginPath(); ctx.moveTo(mx-7,my-6+k); ctx.lineTo(mx,my); ctx.lineTo(mx-2,my+7-k);
@@ -1984,7 +2049,7 @@ function drawWorld(){
   }
   ctx.globalAlpha=1;
 
-  if(placing){
+  if(placing||rmbGhost){
     const mx=mouse.x+cam.x, my=mouse.y+cam.y;
     const ok=ghostValid(mx,my);
     const e=segPts({x:mx,y:my,angle:ghostAngle,len:90});
@@ -2100,6 +2165,17 @@ function drawHUD(){
     ctx.fillText(g.name, x+12, y+40);
     ctx.font='10px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.5)';
     ctx.fillText(g.desc, x+12, y+56);
+    ctx.textAlign='right';
+    if(P.reloadT>0){
+      ctx.fillStyle='#ffe14d'; ctx.font='bold 11px Segoe UI';
+      ctx.fillText('RELOADING', x+223, y+40);
+      ctx.fillStyle='rgba(255,255,255,0.15)'; ctx.fillRect(x+153,y+46,70,6);
+      ctx.fillStyle='#ffe14d'; ctx.fillRect(x+153,y+46,70*clamp(1-P.reloadT/g.rel,0,1),6);
+    } else {
+      ctx.fillStyle= P.ammo<=Math.ceil(g.mag*0.25)? '#ff4d6d':'#fff';
+      ctx.font='bold 20px Segoe UI';
+      ctx.fillText(P.ammo+'/'+g.mag, x+223, y+44);
+    }
   }
   if(heldItem==='ball'){
     ctx.save(); ctx.translate(VW/2, VH-46);
@@ -2119,7 +2195,7 @@ function drawHUD(){
   ctx.fillStyle= placing? '#7dff5e':'#cfe8ff';
   ctx.fillText('◇ MIRRORS '+myMirrors().length+'/'+mirrorMax, VW-20, VH-46);
   ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.55)';
-  ctx.fillText('[E/RMB] place · [X] pick up · shatter after '+MIRROR_HITS+' bounces · [T] sight '+(sightOn?'ON':'OFF'), VW-20, VH-28);
+  ctx.fillText('HOLD RMB = quick place · [E] place mode · [X] pick up · [T] sight '+(sightOn?'ON':'OFF'), VW-20, VH-28);
   if(placing){
     ctx.textAlign='center'; ctx.font='bold 15px Segoe UI';
     ctx.fillStyle='#7dff5e';
@@ -2134,8 +2210,13 @@ function drawHUD(){
     ctx.fillStyle=`hsl(${beatT*300%360},100%,65%)`; ctx.fillText(announceTxt,0,0);
     ctx.restore(); ctx.globalAlpha=1;
   }
+  if(escT>0){
+    ctx.textAlign='center'; ctx.font='bold 14px Segoe UI';
+    ctx.fillStyle='rgba(255,255,255,'+clamp(escT/1.2,0,1)+')';
+    ctx.fillText('press ESC again to quit to the menu', VW/2, 84);
+  }
   if(helpT>0||helpPin) drawHelp();
-  else { ctx.textAlign='left'; ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.fillText('[H] help', 20, VH-16); }
+  else { ctx.textAlign='left'; ctx.font='11px Segoe UI'; ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.fillText('[H] help · [ESC×2] menu', 20, VH-16); }
   if(music.nameT>0 && music.name){
     ctx.globalAlpha=clamp(music.nameT,0,1);
     ctx.textAlign='center'; ctx.font='bold 13px Segoe UI';
@@ -2166,18 +2247,21 @@ function drawHelp(){
     ['FIRE','LMB · #4 hold + release'],
     ['LASER SIGHT','[T] · only YOU can see yours'],
     ['WEAPON','fixed by your class — pick in the menu'],
-    ['MIRRORS','E/RMB place ('+mirrorMax+' out max) · X pick up'],
+    ['RELOAD','R · automatic when the mag runs dry'],
+    ['MIRRORS','HOLD RMB, release to place · E = mode · X pick up'],
+    ['MIRROR AIM','scroll rotates · SHIFT+scroll fine · '+mirrorMax+' out max'],
     ['LOOT KEYS','Q hook · F throw · C blink'],
     ['VOLUME','- / = master · sliders in the menu'],
     ['','—'],
     ['★ EVERY BOUNCE','multiplies laser damage'],
     ['★ BOUNCED SHOTS','can hit YOU — laser-jump with them'],
-    ['★ YOUR MIRRORS','shatter after '+MIRROR_HITS+' bounces'],
+    ['★ YOUR MIRRORS','have HP — heavy lasers chew them faster'],
     ['★ PRISMS / ? BOXES','need bounces / respawn loot'],
     ['★ HYPE SPEAKERS','shoot them — stingers drop ON the beat'],
     ['★ RED ZONES','hazards — do not dance there'],
     ['','—'],
     ['HELP / PAUSE / MUTE','H / P / M'],
+    ['QUIT TO MENU','ESC twice'],
   ];
   const x=VW-350, y=90, alpha= helpPin?0.92:clamp(helpT/2,0,0.92);
   ctx.globalAlpha=alpha;
@@ -2199,6 +2283,10 @@ function drawCrosshair(){
   ctx.beginPath(); ctx.arc(mouse.x,mouse.y,9,0.3,1.3); ctx.stroke();
   ctx.beginPath(); ctx.arc(mouse.x,mouse.y,9,0.3+Math.PI,1.3+Math.PI); ctx.stroke();
   ctx.fillStyle=g.color; ctx.fillRect(mouse.x-1,mouse.y-1,2,2);
+  if(P.reloadT>0){
+    ctx.strokeStyle='#ffe14d'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(mouse.x,mouse.y,14,-Math.PI/2,-Math.PI/2+TAU*clamp(1-P.reloadT/GUNS[P.gun].rel,0,1)); ctx.stroke();
+  }
 }
 
 // ---------- menu / lobby ----------
@@ -2665,7 +2753,7 @@ window.LR4 = {
     stage:STAGES[stageIdx].name, cls:CLASSES[P.cls].name, color:myColor, score,kills,bestBounce,
     hp:Math.round(P.hp), maxHp:P.maxHp, x:P.x,y:P.y,vx:Math.round(P.vx),vy:Math.round(P.vy),
     spiked:+P.spikedT.toFixed(2), beams:beams.length,
-    mirrors:playerMirrors.length, mirrorMax, held:heldItem,
+    mirrors:playerMirrors.length, mirrorMax, held:heldItem, ammo:P.ammo, reload:+P.reloadT.toFixed(2),
     vol:{...vol},
     peers:peers.map((p,i)=>p.on?{i,x:Math.round(p.x),y:Math.round(p.y),hp:p.hp,cls:p.cls,col:p.col}:null).filter(Boolean),
     buffs:Object.fromEntries(Object.entries(buffs).filter(([k,v])=>v>0).map(([k,v])=>[k,+v.toFixed(1)])),
@@ -2678,6 +2766,7 @@ window.LR4 = {
   setVol(k,v){ if(k in vol){ vol[k]=clamp(v,0,1); applyVolumes(); saveVol(); } },
   hitFrom(dx,dy,d){ hitKnock(dx,dy,d||20); },
   spawnOrb(x,y,vx,vy){ orbs.push({x,y,vx,vy,life:6}); },
+  mirrorsDbg:()=>playerMirrors.map(m=>({id:m.id,hp:m.hp,x:m.x,y:m.y,angle:m.angle})),
   orbs:()=>orbs.map(o=>({x:Math.round(o.x),y:Math.round(o.y),vx:Math.round(o.vx),vy:Math.round(o.vy),r:!!o.reflected})),
   solo(){ if(state!=='play') startSolo(); },
   host(mode){ hostRoom(mode||'coop'); },
@@ -2688,7 +2777,7 @@ window.LR4 = {
   leave(){ leaveToMenu(''); },
   setStage(i){ menuStageSel=clamp(i|0,0,STAGES.length); },
   teleport(x,y){ P.x=x; P.y=y; P.vx=P.vy=0; },
-  placeMirror(x,y,angle){ const m={id:'dbg'+MP.you+'-'+(mirrorIdSeq++),x,y,angle,len:90,player:true,owner:MP.you,hits:0}; playerMirrors.push(m); net.send({t:'mplace',m}); },
+  placeMirror(x,y,angle){ const m={id:'dbg'+MP.you+'-'+(mirrorIdSeq++),x,y,angle,len:90,player:true,owner:MP.you,hp:MIRROR_HP}; playerMirrors.push(m); net.send({t:'mplace',m}); },
   give(id){ const i=POWERUPS.findIndex(p=>p.id===id); if(i>=0) applyPowerup(i); },
   shootAt(x,y){ const g=effGun(GUNS[P.gun]); shoot(g, Math.atan2(y-(P.y+23), x-(P.x+13)), 1); },
   throwBall(){ throwItem(); },
